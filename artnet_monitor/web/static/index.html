@@ -20,6 +20,7 @@
   .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; margin-left: 8px; }
   .badge.ok { background: #1e3a1e; color: #7ed17e; }
   .badge.bad { background: #3a1e1e; color: #ff8a80; }
+  .badge.neutral { background: #2e2e2e; color: #999; }
   .iface-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 18px;
     background: #1c1c1c; border: 1px solid #2a2a2a; border-radius: 10px; padding: 10px 14px; }
   .iface-bar label { font-size: 12px; color: #999; }
@@ -128,6 +129,15 @@
   #patchUniverseGrids .chan-cell.patched { background: #24304d; }
   #patchUniverseGrids .chan-cell.patched:hover { background: #2e3d63; }
   #patchUniverseGrids .chan-cell.patched .chan-num { color: rgba(255,255,255,0.5); }
+  /* bulk selection on the patch grid */
+  #patchUniverseGrids .chan-cell.selected { background: #3a2a12; border-color: #ffb020; }
+  .selection-bar { display: flex; align-items: center; gap: 8px; margin: 10px 0;
+    background: #241d10; border: 1px solid #5a4520; border-radius: 8px;
+    padding: 8px 12px; font-size: 13px; color: #ffd591; }
+  .selection-bar[hidden] { display: none; }
+  .conflict-banner { background: #2a1414; border: 1px solid #c0392b; border-radius: 8px;
+    padding: 10px 12px; margin: 10px 0; font-size: 12px; color: #ff8a80; }
+  .conflict-banner b { color: #ffb3ad; }
   .legend { display: flex; gap: 16px; margin: 10px 0; font-size: 11px; color: #999; }
   .legend .swatch { display: inline-block; width: 11px; height: 11px; border-radius: 2px;
     margin-right: 5px; vertical-align: middle; }
@@ -266,6 +276,36 @@
     text-transform: uppercase; letter-spacing: 0.03em; background: #171717;
     padding: 8px 12px; border-bottom: 1px solid #2a2a2a; }
   .data-table tr.group-row:hover td { background: #171717; }
+
+  /* Report page */
+  .report-meta { display: flex; justify-content: space-between; align-items: center; }
+  .report-rule { margin: 3px 0; }
+  .report-rule-toggle { display: flex; align-items: center; gap: 5px; background: none;
+    border: none; color: #ff8a80; font-size: 12px; cursor: pointer; padding: 3px 0;
+    text-align: left; font-family: inherit; }
+  .report-rule-toggle:hover { text-decoration: underline; }
+  .report-rule-caret { display: inline-block; width: 10px; font-size: 10px; color: #999; }
+  .report-rule-detail { margin: 2px 0 8px 15px; font-size: 11px; color: #999; }
+  .report-violation-row { padding: 1px 0; }
+
+  @media print {
+    .nav-tabs, .iface-bar, .page-header button, #reportPrintBtn,
+    .toast-stack, .modal-backdrop { display: none !important; }
+    body { background: #fff; color: #111; }
+    .page-header h2, .row-name, .report-violation-row, .report-rule-toggle b { color: #111; }
+    .page-header p.msg, .msg, .report-meta .msg { color: #444; }
+    .panel { border: 1px solid #ccc; background: #fff; box-shadow: none; }
+    .data-table th { color: #555; border-color: #ccc; }
+    .data-table td { color: #111; border-color: #ddd; }
+    .badge.ok { background: #e3f5e3; color: #1e6b1e; }
+    .badge.bad { background: #fbe3e3; color: #a11; }
+    .badge.neutral { background: #eee; color: #555; }
+    .report-rule-toggle { color: #a11; }
+    .report-rule-caret { display: none; }
+    /* the printout is a fixed record -- show every violation's detail
+       regardless of what was expanded on screen when it was generated */
+    .report-rule-detail[hidden] { display: block !important; }
+  }
 </style>
 </head>
 <body>
@@ -284,6 +324,7 @@
     <div class="nav-tab" data-page="groups">Fixture Groups</div>
     <div class="nav-tab" data-page="rules">Rules</div>
     <div class="nav-tab" data-page="cues">Cues</div>
+    <div class="nav-tab" data-page="report">Report</div>
     <div class="nav-tab" data-page="backup">Backup</div>
   </div>
 
@@ -392,6 +433,15 @@
       <div class="legend">
         <span><span class="swatch" style="background:#24304d; border:1px solid #3a6bd6;"></span>Patched — click to edit or delete</span>
         <span><span class="swatch" style="background:#1a1a1a; border:1px solid #222;"></span>Unpatched</span>
+        <span><span class="swatch" style="background:#3a2a12; border:1px solid #ffb020;"></span>Selected (ctrl/⌘-click)</span>
+      </div>
+      <div id="patchConflicts"></div>
+      <div id="patchSelectionBar" class="selection-bar" hidden>
+        <span id="patchSelectionCount"></span>
+        <span style="flex:1;"></span>
+        <button class="btn secondary small" id="patchReaddressBtn">Re-address…</button>
+        <button class="btn danger small" id="patchDeleteSelectedBtn">Delete selected</button>
+        <button class="btn secondary small" id="patchClearSelectionBtn">Clear</button>
       </div>
       <div id="patchUniverseGrids"></div>
     </div>
@@ -456,6 +506,21 @@
     <div class="panel">
       <div id="cuesList"></div>
     </div>
+  </div>
+
+  <!-- ============ REPORT PAGE ============ -->
+  <div class="page" id="page-report">
+    <div class="page-header">
+      <div>
+        <h2>Compliance Report</h2>
+        <p class="msg">A frozen snapshot checking every cue against current live values, as if each were active on its own — not just whichever cue happens to be selected right now.</p>
+      </div>
+      <div style="display:flex; gap:8px; flex-shrink:0;">
+        <button class="btn secondary" id="reportHistoryBtn">History</button>
+        <button class="btn" id="reportGenerateBtn">Generate &amp; Save</button>
+      </div>
+    </div>
+    <div id="reportOutput"></div>
   </div>
 
   <!-- ============ BACKUP PAGE ============ -->
@@ -1041,19 +1106,185 @@ function renderPatchGrids(snapshot) {
       const owner = info.owners[String(ch)];
       const cell = cells[i];
       cell.classList.toggle("patched", !!owner);
-      cell.title = owner ? `Ch ${ch}: ${owner.fixture} (${owner.role})` : `Ch ${ch}: unpatched`;
+      cell.dataset.fixture = owner ? owner.fixture : "";
+      cell.title = owner
+        ? `Ch ${ch}: ${owner.fixture} (${owner.role}) — click to edit, ctrl/⌘-click to select`
+        : `Ch ${ch}: unpatched`;
       cell.style.cursor = owner ? "pointer" : "default";
-      cell.onclick = owner ? () => openFixtureMenuModal(owner.fixture) : null;
+      cell.onclick = owner
+        ? (e) => (e.ctrlKey || e.metaKey)
+            ? togglePatchSelection(owner.fixture)
+            : openFixtureMenuModal(owner.fixture)
+        : null;
     }
   }
+  updatePatchSelectionUI();
 }
 
 async function loadPatchGrids() {
   try {
     const res = await fetch("/api/snapshot");
     renderPatchGrids(await res.json());
+    await loadPatchConflicts();
   } catch (e) { /* ignore -- the next add/edit/delete triggers a fresh load */ }
 }
+
+// New/edited fixtures are rejected if they'd overlap, but a config patched
+// before that check existed (or hand-edited) can still contain overlaps --
+// and an overlapped fixture is invisible in the grid, since only one owner
+// per channel survives. Surface them rather than letting them hide.
+async function loadPatchConflicts() {
+  const container = document.getElementById("patchConflicts");
+  try {
+    const res = await fetch("/api/patch/conflicts");
+    const { conflicts } = await res.json();
+    if (!conflicts.length) { container.innerHTML = ""; return; }
+
+    const byPair = new Map();
+    for (const c of conflicts) {
+      const key = c.fixtures.join(" / ");
+      if (!byPair.has(key)) byPair.set(key, []);
+      byPair.get(key).push(`U${c.universe}:${c.channel}`);
+    }
+    container.innerHTML = `
+      <div class="conflict-banner">
+        <b>${conflicts.length} channel${conflicts.length === 1 ? "" : "s"} patched to more than one fixture.</b>
+        Only one owner shows in the grid, so the other is invisible here while still being compliance-checked.
+        ${[...byPair].map(([names, chans]) => `
+          <div style="margin-top:5px;">${escapeHtml(names)} — ${escapeHtml(
+            chans.slice(0, 8).join(", ") + (chans.length > 8 ? ` +${chans.length - 8} more` : ""))}</div>
+        `).join("")}
+      </div>`;
+  } catch (e) { container.innerHTML = ""; }
+}
+
+// ── Patch grid bulk selection ────────────────────────────────────────────
+// Ctrl/⌘-click toggles a fixture into the selection instead of opening its
+// menu, so a run of fixtures can be deleted or re-addressed in one go.
+
+const patchSelection = new Set();
+
+function updatePatchSelectionUI() {
+  const bar = document.getElementById("patchSelectionBar");
+  bar.hidden = patchSelection.size === 0;
+  document.getElementById("patchSelectionCount").textContent =
+    `${patchSelection.size} fixture${patchSelection.size === 1 ? "" : "s"} selected`;
+  for (const cells of Object.values(patchCellRefs)) {
+    for (const cell of cells) {
+      const name = cell.dataset.fixture;
+      cell.classList.toggle("selected", !!name && patchSelection.has(name));
+    }
+  }
+}
+
+function togglePatchSelection(name) {
+  if (patchSelection.has(name)) patchSelection.delete(name);
+  else patchSelection.add(name);
+  updatePatchSelectionUI();
+}
+
+function clearPatchSelection() {
+  patchSelection.clear();
+  updatePatchSelectionUI();
+}
+
+document.getElementById("patchClearSelectionBtn").addEventListener("click", clearPatchSelection);
+
+document.getElementById("patchDeleteSelectedBtn").addEventListener("click", () => {
+  const names = [...patchSelection];
+  openFormModal({
+    title: `Delete ${names.length} fixture${names.length === 1 ? "" : "s"}?`,
+    bodyHtml: `
+      <p style="margin:0; font-size:13px; color:#ccc;">${escapeHtml(names.slice(0, 12).join(", "))}${names.length > 12 ? ` +${names.length - 12} more` : ""}</p>
+      <p class="msg">Any fixture group still listing these keeps the name until you edit it.</p>
+    `,
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: `Delete ${names.length}`,
+        variant: "danger",
+        onClick: async (bodyEl, btn) => {
+          btn.disabled = true;
+          let deleted = 0;
+          try {
+            for (const name of names) {
+              const res = await fetch(`/api/patch/fixtures/${encodeURIComponent(name)}`, { method: "DELETE" });
+              if (res.ok) deleted++;
+            }
+            closeFormModal();
+            showToast(`Deleted ${deleted} fixture${deleted === 1 ? "" : "s"}.`);
+            clearPatchSelection();
+            await loadPatchGrids();
+          } catch (e) {
+            setMsg(formModalMsg, `Request failed after ${deleted} — check the console log.`, false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+});
+
+document.getElementById("patchReaddressBtn").addEventListener("click", () => {
+  // Ordered by current address so re-packing preserves their relative order.
+  const names = [...patchSelection].sort((a, b) => {
+    const fa = fixtureFromPatchSnapshot(a), fb = fixtureFromPatchSnapshot(b);
+    return (fa.universe - fb.universe) || (fa.start_channel - fb.start_channel);
+  });
+  const first = fixtureFromPatchSnapshot(names[0]);
+  openFormModal({
+    title: `Re-address ${names.length} fixture${names.length === 1 ? "" : "s"}`,
+    bodyHtml: `
+      <p class="msg">Packs them back-to-back from the address below, in their current order. Each keeps its own profile and mode.</p>
+      <div class="row">
+        <div class="field"><label>Universe</label><input id="readdrUniverse" type="number" min="1" value="${first.universe}" style="width:90px; min-width:90px;"></div>
+        <div class="field"><label>Start channel</label><input id="readdrStart" type="number" min="1" max="512" value="${first.start_channel}" style="width:100px; min-width:100px;"></div>
+      </div>
+      <div class="msg">${escapeHtml(names.slice(0, 12).join(", "))}${names.length > 12 ? ` +${names.length - 12} more` : ""}</div>
+    `,
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Re-address",
+        onClick: async (bodyEl, btn) => {
+          let universe = Number(bodyEl.querySelector("#readdrUniverse").value);
+          let channel = Number(bodyEl.querySelector("#readdrStart").value);
+          btn.disabled = true;
+          let moved = 0;
+          try {
+            for (const name of names) {
+              const fx = fixtureFromPatchSnapshot(name);
+              const span = Object.keys(fx.values).length;
+              if (channel + span - 1 > 512) { universe++; channel = 1; }
+              const res = await fetch(`/api/patch/fixtures/${encodeURIComponent(name)}`, {
+                method: "PUT", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  universe, start_channel: channel, profile: fx.profile, mode: fx.mode,
+                }),
+              });
+              if (!res.ok) {
+                const data = await res.json();
+                setMsg(formModalMsg, `${data.error || "Failed"} (${moved} moved so far)`, false);
+                return;
+              }
+              moved++;
+              channel += span;
+            }
+            closeFormModal();
+            showToast(`Re-addressed ${moved} fixture${moved === 1 ? "" : "s"}.`);
+            clearPatchSelection();
+          } catch (e) {
+            setMsg(formModalMsg, `Request failed after ${moved} — check the console log.`, false);
+          } finally {
+            btn.disabled = false;
+            await loadPatchGrids();
+          }
+        },
+      },
+    ],
+  });
+});
 
 function fixtureFromPatchSnapshot(name) {
   return patchSnapshot ? patchSnapshot.fixtures.find(f => f.name === name) : null;
@@ -1123,12 +1354,12 @@ function openEditFixtureModal(fx) {
       <div class="row">
         <div class="field" style="flex:1; max-width:220px;">
           <label>Name</label>
-          <input value="${escapeHtml(fx.name)}" disabled style="width:100%;">
+          <input id="editFxName" value="${escapeHtml(fx.name)}" style="width:100%;">
         </div>
         <div class="field"><label>Universe</label><input id="editFxUniverse" type="number" min="1" value="${fx.universe}" style="width:90px; min-width:90px;"></div>
         <div class="field"><label>Start channel</label><input id="editFxStart" type="number" min="1" max="512" value="${fx.start_channel}" style="width:100px; min-width:100px;"></div>
       </div>
-      <p class="msg">A fixture's name can't be changed here — delete and re-add it to rename.</p>
+      <p class="msg">Renaming updates every fixture group, rule, and cue that targets this fixture by name.</p>
       <div class="row">
         <div class="field" style="flex:1; max-width:320px;">
           <label>Profile</label>
@@ -1152,7 +1383,10 @@ function openEditFixtureModal(fx) {
       {
         label: "Save changes",
         onClick: async (bodyEl, btn) => {
+          const name = bodyEl.querySelector("#editFxName").value.trim();
+          if (!name) { setMsg(formModalMsg, "Name is required.", false); return; }
           const body = {
+            name,
             universe: Number(bodyEl.querySelector("#editFxUniverse").value),
             start_channel: Number(bodyEl.querySelector("#editFxStart").value),
             profile: bodyEl.querySelector("#editFxProfile").value,
@@ -1168,7 +1402,18 @@ function openEditFixtureModal(fx) {
             const data = await res.json();
             if (!res.ok) { setMsg(formModalMsg, data.error || "Failed to update fixture.", false); return; }
             closeFormModal();
-            showToast(`Updated "${fx.name}".`);
+            if (data.renamed) {
+              const { groups = 0, rules = 0, cue_assignments: cues = 0 } = data.retargeted || {};
+              const touched = groups + rules + cues;
+              showToast(touched
+                ? `Renamed to "${name}" — repointed ${groups} group(s), ${rules} rule(s), ${cues} cue assignment(s).`
+                : `Renamed to "${name}".`);
+              loadGroups();
+              loadRulesList();
+              loadRuleTargets();
+            } else {
+              showToast(`Updated "${name}".`);
+            }
             await loadPatchGrids();
           } catch (e) {
             setMsg(formModalMsg, "Request failed — check the console log.", false);
@@ -2465,7 +2710,7 @@ function renderCuesList(cues, activeCue) {
     </table>
   `;
   const tbody = container.querySelector("tbody");
-  for (const cue of cues) {
+  cues.forEach((cue, i) => {
     const isActive = cue.name === activeCue;
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -2474,16 +2719,39 @@ function renderCuesList(cues, activeCue) {
       <td>${cueAssignmentSummary(cue)}</td>
       <td class="col-actions">
         <span class="row-actions">
+          <button class="btn secondary small cue-up" title="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
+          <button class="btn secondary small cue-down" title="Move down" ${i === cues.length - 1 ? "disabled" : ""}>↓</button>
           <button class="btn secondary small cue-toggle-active">${isActive ? "Clear" : "Set Active"}</button>
           <button class="btn secondary small cue-edit">Edit</button>
           <button class="btn danger small cue-delete">Delete</button>
         </span>
       </td>
     `;
+    tr.querySelector(".cue-up").addEventListener("click", () => moveCue(i, -1));
+    tr.querySelector(".cue-down").addEventListener("click", () => moveCue(i, 1));
     tr.querySelector(".cue-toggle-active").addEventListener("click", () => setActiveCue(isActive ? null : cue.name));
     tr.querySelector(".cue-edit").addEventListener("click", () => openEditCueModal(cue));
     tr.querySelector(".cue-delete").addEventListener("click", () => openDeleteCueModal(cue, isActive));
     tbody.appendChild(tr);
+  });
+}
+
+// Cues run in the order they're listed, so the list order is meaningful --
+// this reorders the persisted `cues:` block, not just the display.
+async function moveCue(index, delta) {
+  const names = allCues.map(c => c.name);
+  const target = index + delta;
+  if (target < 0 || target >= names.length) return;
+  [names[index], names[target]] = [names[target], names[index]];
+  try {
+    const res = await fetch("/api/cues/reorder", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ names }),
+    });
+    if (!res.ok) { showToast("Failed to reorder cues.", { variant: "error" }); return; }
+    await loadCues();
+  } catch (e) {
+    showToast("Request failed — check the console log.", { variant: "error" });
   }
 }
 
@@ -2521,6 +2789,198 @@ async function loadCues() {
     renderActiveCueSelect(data.cues, data.active_cue);
   } catch (e) { /* ignore — next poll or ws update will retry */ }
 }
+
+// ── Compliance Report ─────────────────────────────────────────────────────
+// A frozen snapshot judging every cue at once (as if each were active on
+// its own) against current live DMX -- unlike Monitor, which only ever
+// evaluates whichever cue actually is selected. Generated on demand, not
+// live-updating, so it's a stable record you can look back at or print.
+
+function reportStatusBadge(status) {
+  if (status === "compliant") return '<span class="badge ok">COMPLIANT</span>';
+  if (status === "violation") return '<span class="badge bad">VIOLATION</span>';
+  return '<span class="badge neutral">NO RULES</span>';
+}
+
+function reportBoundText(v) {
+  const unitSuffix = valueUnit === "percent" ? "%" : "";
+  const hasMin = v.min !== null && v.min !== undefined;
+  const hasMax = v.max !== null && v.max !== undefined;
+  if (hasMin && hasMax) {
+    return v.min === v.max
+      ? `expected ${dmxToDisplay(v.min)}${unitSuffix}`
+      : `expected ${dmxToDisplay(v.min)}–${dmxToDisplay(v.max)}${unitSuffix}`;
+  }
+  return hasMax ? `expected ≤ ${dmxToDisplay(v.max)}${unitSuffix}` : `expected ≥ ${dmxToDisplay(v.min)}${unitSuffix}`;
+}
+
+function reportRuleDetailHtml(ruleReport) {
+  return ruleReport.violations.map(v => `
+    <div class="report-violation-row">${escapeHtml(v.fixture)}: ${escapeHtml(v.channel)} = ${dmxToDisplay(v.value)}${valueUnit === "percent" ? "%" : ""} (${reportBoundText(v)})</div>
+  `).join("");
+}
+
+function reportCueDetailHtml(cue) {
+  if (cue.status === "unconfigured") return '<span class="msg">No rules apply to this cue.</span>';
+  if (!cue.rule_reports.length) return '<span class="msg">All checked rules passing.</span>';
+  return cue.rule_reports.map(rr => `
+    <div class="report-rule">
+      <button type="button" class="report-rule-toggle">
+        <span class="report-rule-caret">▸</span>
+        <b>${escapeHtml(rr.rule_name)}</b> — ${rr.channels.map(c => `${escapeHtml(c)} out of range`).join(", ")}
+      </button>
+      <div class="report-rule-detail" hidden>${reportRuleDetailHtml(rr)}</div>
+    </div>
+  `).join("");
+}
+
+function renderReport(report) {
+  const container = document.getElementById("reportOutput");
+  const generatedAt = new Date(report.generated_at * 1000).toLocaleString();
+  const activeCueText = report.active_cue
+    ? `"${escapeHtml(report.active_cue)}" was the active cue at the time — every cue above was still checked as if it alone were active.`
+    : "No cue was active at the time.";
+
+  container.innerHTML = `
+    <div class="panel report-meta">
+      <div>
+        <div style="font-size:13px; color:#ccc;">Generated ${generatedAt}</div>
+        <p class="msg" style="margin-top:2px;">${activeCueText}</p>
+      </div>
+      <button class="btn secondary" id="reportPrintBtn">Print</button>
+    </div>
+    <div class="panel">
+      <table class="data-table">
+        <thead>
+          <tr><th style="width:200px;">Cue</th><th style="width:130px;">Status</th><th>Details</th></tr>
+        </thead>
+        <tbody>
+          ${report.cues.map(cue => `
+            <tr>
+              <td class="row-name">${escapeHtml(cue.name)}</td>
+              <td>${reportStatusBadge(cue.status)}</td>
+              <td>${reportCueDetailHtml(cue)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  container.querySelectorAll(".report-rule-toggle").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const detail = btn.nextElementSibling;
+      const wasHidden = detail.hidden;
+      detail.hidden = !wasHidden;
+      btn.querySelector(".report-rule-caret").textContent = wasHidden ? "▾" : "▸";
+    });
+  });
+
+  document.getElementById("reportPrintBtn").addEventListener("click", () => window.print());
+}
+
+// Generating saves the report as a dated record -- the point of a
+// compliance report is being able to show it later, so keeping it is the
+// default rather than an extra step.
+document.getElementById("reportGenerateBtn").addEventListener("click", () => {
+  openFormModal({
+    title: "Generate report",
+    bodyHtml: `
+      <p class="msg">Checks every cue against current live values and keeps the result as a dated record.</p>
+      <div class="field">
+        <label>Label (optional)</label>
+        <input id="reportLabel" placeholder="e.g. Pre-service check" style="width:100%; max-width:360px;">
+      </div>
+    `,
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Generate",
+        onClick: async (bodyEl, btn) => {
+          const label = bodyEl.querySelector("#reportLabel").value.trim();
+          btn.disabled = true;
+          try {
+            const res = await fetch("/api/reports", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ label }),
+            });
+            if (!res.ok) { setMsg(formModalMsg, "Failed to generate report.", false); return; }
+            closeFormModal();
+            renderReport(await res.json());
+            showToast("Report generated and saved.");
+          } catch (e) {
+            setMsg(formModalMsg, "Request failed — check the console log.", false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+});
+
+function reportCountsSummary(counts) {
+  const parts = [];
+  if (counts.violation) parts.push(`<span class="badge bad">${counts.violation} VIOLATION</span>`);
+  if (counts.compliant) parts.push(`<span class="badge ok">${counts.compliant} OK</span>`);
+  if (counts.unconfigured) parts.push(`<span class="badge neutral">${counts.unconfigured} NO RULES</span>`);
+  return parts.join(" ") || '<span class="msg">no cues</span>';
+}
+
+async function openReportHistoryModal() {
+  let listing = [];
+  try {
+    const res = await fetch("/api/reports");
+    listing = (await res.json()).reports;
+  } catch (e) {
+    showToast("Couldn't load report history.", { variant: "error" });
+    return;
+  }
+
+  openFormModal({
+    title: "Saved reports",
+    wide: true,
+    bodyHtml: listing.length ? `
+      <table class="data-table">
+        <thead><tr><th style="width:180px;">Generated</th><th>Label</th><th style="width:260px;">Result</th><th class="col-actions"></th></tr></thead>
+        <tbody>
+          ${listing.map(r => `
+            <tr data-report-id="${escapeHtml(r.id)}">
+              <td class="row-name">${new Date(r.generated_at * 1000).toLocaleString()}</td>
+              <td>${r.label ? escapeHtml(r.label) : '<span class="msg">—</span>'}</td>
+              <td>${reportCountsSummary(r.counts)}</td>
+              <td class="col-actions">
+                <span class="row-actions">
+                  <button class="btn secondary small report-open">Open</button>
+                  <button class="btn danger small report-delete">Delete</button>
+                </span>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    ` : '<p class="msg">No saved reports yet — generate one to start a history.</p>',
+    onReady: (bodyEl) => {
+      bodyEl.querySelectorAll("tr[data-report-id]").forEach(row => {
+        const id = row.dataset.reportId;
+        row.querySelector(".report-open").addEventListener("click", async () => {
+          const res = await fetch(`/api/reports/${encodeURIComponent(id)}`);
+          if (!res.ok) { setMsg(formModalMsg, "Couldn't open that report.", false); return; }
+          closeFormModal();
+          renderReport(await res.json());
+        });
+        row.querySelector(".report-delete").addEventListener("click", async () => {
+          await fetch(`/api/reports/${encodeURIComponent(id)}`, { method: "DELETE" });
+          row.remove();
+          showToast("Report deleted.");
+        });
+      });
+    },
+    buttons: [{ label: "Close", variant: "secondary", onClick: closeFormModal }],
+  });
+}
+
+document.getElementById("reportHistoryBtn").addEventListener("click", openReportHistoryModal);
 
 // ── Backup & Restore ─────────────────────────────────────────────────────
 
@@ -2695,11 +3155,18 @@ function updateUniverseGrids(snapshot) {
       const isChecked = checkedChannels.has(ch);
       const isViolated = violatedChannels.has(ch);
       const cell = cells[i];
-      cell.style.background = cellColor(isChecked, isViolated, value);
+      // 4096 cells repainted twice a second: only touch the DOM for the
+      // ones that actually changed since the last tick.
+      const color = cellColor(isChecked, isViolated, value);
+      if (cell.dataset.color !== color) {
+        cell.style.background = color;
+        cell.dataset.color = color;
+      }
       cell.classList.toggle("patched", !!owner);
       cell.classList.toggle("violation", isViolated);
       const statusNote = !owner ? "" : (isChecked ? "" : " (no rule applies)");
-      cell.title = owner ? `Ch ${ch}: ${owner.fixture} (${owner.role}) = ${value}${statusNote}` : `Ch ${ch}: ${value}`;
+      const title = owner ? `Ch ${ch}: ${owner.fixture} (${owner.role}) = ${value}${statusNote}` : `Ch ${ch}: ${value}`;
+      if (cell.title !== title) cell.title = title;
     }
   }
 }
@@ -2750,7 +3217,20 @@ document.getElementById("detailModal").addEventListener("click", (e) => {
   if (e.target.id === "detailModal") e.currentTarget.classList.remove("open");
 });
 
+// The websocket omits each universe's `owners` map on ticks where the patch
+// hasn't changed (it's over half the payload). Re-attach the last-known copy
+// so everything downstream can treat every snapshot as complete.
+const ownersCache = {};
+function mergeCachedOwners(snapshot) {
+  for (const [universe, info] of Object.entries(snapshot.universes)) {
+    if (info.owners) ownersCache[universe] = info.owners;
+    else info.owners = ownersCache[universe] || {};
+  }
+  return snapshot;
+}
+
 function render(snapshot) {
+  snapshot = mergeCachedOwners(snapshot);
   latestSnapshot = snapshot;
   updateUniverseGrids(snapshot);
 

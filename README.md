@@ -107,7 +107,11 @@ selector at the top:
   but showing what's patched rather than live compliance) for everything
   already patched. Each fixture's name labels its lowest channel and
   overlays across the rest of its span; hover any of its cells to highlight
-  the whole fixture, click one to edit its address/profile or delete it.
+  the whole fixture, click one to edit its address/profile/name or delete
+  it, and ctrl-click (⌘-click on a Mac) to select several for bulk delete or
+  re-addressing. Patching a fixture on top of another's channels is refused
+  rather than silently accepted, and any overlaps already in your config are
+  flagged above the grid.
 - **Fixture Groups** — named sets of fixtures (e.g. "House Whites", "Stage
   Front") so a rule can be assigned to a whole set at once instead of
   listing fixtures individually.
@@ -223,6 +227,21 @@ cue is *currently active* is runtime state, not saved to disk — it resets
 to "none" on restart, so a show doesn't silently start already treating some
 cue as active.
 
+## Network access and security
+
+The dashboard can rewrite your patch, restart the Art-Net node, and replace
+your whole configuration, so it **binds to `127.0.0.1` by default** — reachable
+from the machine it runs on, and nothing else.
+
+- To reach it from another machine, pass `--web-host 0.0.0.0`.
+- On any network you don't fully control, pair that with a token:
+  `--auth-token yoursecret` (or set `ARTNET_AUTH_TOKEN`). Then open
+  `http://<host>:8000/?token=yoursecret` once and the browser keeps it in a
+  cookie.
+
+The Art-Net node itself is unaffected by this setting — it always listens on
+the LAN, because that's the entire point of it.
+
 ## Where your data lives, and updating safely
 
 Everything you configure — universes, fixtures, fixture groups, rules,
@@ -235,6 +254,7 @@ right next to wherever you run the app. No database.
   you've pulled from OFL or defined yourself.
 - `config/fixture_profiles/ofl_index_cache.json` — the OFL search index
   cache, safe to delete any time to force a refresh.
+- `config/reports/` — saved compliance reports, one dated JSON per report.
 
 **Updating to a new version of this app:** extract the new files into the
 *same* folder rather than deleting it and starting fresh. Releases ship a

@@ -12,6 +12,7 @@ import json
 import logging
 from pathlib import Path
 
+from ..paths import resolve_within, safe_filename
 from .schema import FixtureProfile
 
 log = logging.getLogger("fixture_library")
@@ -52,11 +53,24 @@ class FixtureLibraryStore:
             raise KeyError(f"Unknown fixture profile: {profile_id}")
         return self._profiles[profile_id]
 
+    @staticmethod
+    def _profile_path(directory: Path, profile_id: str) -> Path:
+        """Where a profile id's JSON file lives. The id's source prefix
+        ("custom:", "ofl:") is dropped and the rest sanitised into one
+        filename component -- manufacturer/model reach this straight from
+        the API as free text, so without that an id like
+        "custom:..\\..\\evil" would write outside the profiles directory
+        on Windows. resolve_within is the backstop if anything slips past."""
+        safe_name = safe_filename(profile_id.split(":", 1)[-1])
+        path = resolve_within(directory, f"{safe_name}.json")
+        if path is None:
+            raise ValueError(f"Refusing to use unsafe profile path for '{profile_id}'.")
+        return path
+
     def save_custom(self, profile: FixtureProfile):
         """Writes a custom profile to disk and adds it to the live catalog."""
         profile.source = "custom"
-        safe_name = profile.id.split(":", 1)[-1].replace("/", "_")
-        path = self.custom_dir / f"{safe_name}.json"
+        path = self._profile_path(self.custom_dir, profile.id)
         with open(path, "w") as fh:
             json.dump(profile.to_dict(), fh, indent=2)
         self._profiles[profile.id] = profile
@@ -65,8 +79,7 @@ class FixtureLibraryStore:
     def save_imported(self, profile: FixtureProfile):
         """Writes an OFL-imported profile to disk and adds it to the live catalog."""
         profile.source = "ofl"
-        safe_name = profile.id.split(":", 1)[-1].replace("/", "_")
-        path = self.imported_dir / f"{safe_name}.json"
+        path = self._profile_path(self.imported_dir, profile.id)
         with open(path, "w") as fh:
             json.dump(profile.to_dict(), fh, indent=2)
         self._profiles[profile.id] = profile
@@ -78,7 +91,5 @@ class FixtureLibraryStore:
         profile = self.get(profile_id)
         if profile.source != "custom":
             raise ValueError(f"'{profile_id}' is not a custom profile.")
-        safe_name = profile_id.split(":", 1)[-1].replace("/", "_")
-        path = self.custom_dir / f"{safe_name}.json"
-        path.unlink(missing_ok=True)
+        self._profile_path(self.custom_dir, profile_id).unlink(missing_ok=True)
         del self._profiles[profile_id]

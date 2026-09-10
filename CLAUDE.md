@@ -14,6 +14,60 @@ flags values that violate configured rules. It **never transmits DMX** — it
 only listens and reports. Nothing here should ever gain the ability to drive
 lights.
 
+## Tests
+
+```sh
+python -m pytest        # 53 tests, ~1s
+```
+
+`tests/` covers the things that regress silently: the three cue schema
+generations and the legacy flat-rule migration, patch_writer's surgical
+edits (comment preservation, legacy-key cleanup, sibling rules surviving an
+edit), reference retargeting on group/fixture rename, per-cue report
+evaluation, path-traversal/zip-slip rejection, and the backup round-trip.
+Every test works on a throwaway copy in `tmp_path` — none of them can touch
+a real `config/patch.yaml`. Endpoints are called as plain functions via the
+`routes` fixture (httpx isn't a dependency).
+
+## Security posture
+
+This is a LAN tool with real authority: the dashboard rewrites the patch,
+restarts the Art-Net node, and can replace the entire configuration.
+
+- **Binds `127.0.0.1` by default** (`--web-host`). `0.0.0.0` is opt-in and
+  logs a warning when used without a token.
+- **`--auth-token` / `ARTNET_AUTH_TOKEN`** — when set, every request needs
+  it (`X-Auth-Token` header, `?token=` once, or the cookie that sets).
+- **Cross-origin writes are refused** by middleware in `create_app`. The
+  JSON endpoints were already incidentally safe (cross-origin JSON POSTs
+  trigger a preflight nothing answers), but `multipart/form-data` is a CORS
+  *simple* request — without this, any page could silently POST a crafted
+  backup zip to localhost and wipe the config.
+- **Path safety lives in `paths.py`.** `safe_filename()` + `resolve_within()`
+  guard every place a user-supplied string becomes a filename (profile ids,
+  report ids, zip entries). **Windows treats `\` as a separator too**, so
+  sanitising only `/` is not enough — that gap was a live zip-slip in the
+  backup importer and a traversal via manufacturer/model in profile saves.
+
+## Encoding & atomic writes (paths.py)
+
+Config reads go through `read_text_lenient()` and writes through
+`atomic_write_text()`. Both matter more than they look:
+
+- **Always UTF-8, with a cp1252 fallback.** Bare `open()` on Windows means
+  cp1252; the header comments' em-dashes only survived because those bytes
+  round-trip identically between the two encodings. A fixture named with any
+  character outside cp1252 would have raised UnicodeEncodeError and failed
+  the write.
+- **`read_text_lenient` normalises newlines to `\n`.** It reads binary (to
+  control decoding), so without this the CRLFs come through literally and
+  `atomic_write_text` (newline=None) translates them *again* — turning every
+  line ending into `\r\r\n`, a little worse on every write. There's a test
+  for this; it was caught that way, not by inspection.
+- **Writes are atomic** (temp file + fsync + `os.replace`) and **serialized**
+  by `_serialized`/`_config_lock` in patch_writer, since every writer is a
+  read-modify-write cycle and FastAPI runs sync endpoints on a threadpool.
+
 ## Running it
 
 ```sh
@@ -21,9 +75,10 @@ run.bat          # Windows: activates venv, python -m artnet_monitor.main --conf
 ./run.sh         # macOS/Linux equivalent
 ```
 
-Dashboard at `http://localhost:8000/`. There are **no tests and no build
-step** — the frontend is one hand-written static HTML file, served as-is.
-Verification is manual: run the app and click through the dashboard.
+Dashboard at `http://localhost:8000/`. There's **no build step** — the
+frontend is one hand-written static HTML file, served as-is. Backend logic
+has tests (above); frontend changes are still verified by running the app
+and clicking through.
 
 Requires a real LAN IP (not loopback) to be useful, since Vista unicasts
 ArtDmx back to whatever address the node advertises. Starting the app on a
@@ -167,18 +222,20 @@ Consequences to keep in mind:
 | --- | --- |
 | rule id / deleting a rule | every cue's `rule_assignments` (`remove_rule_id_from_all_cues`) |
 | group name | every rule's `applies_to` and every cue assignment's `applies_to` (`retarget_group_references`) |
-| fixture name | group membership lists, and any `applies_to` naming that fixture |
+| fixture name | group membership lists, and any `applies_to` naming that fixture (`retarget_fixture_references`) |
 
-Fixture rename isn't implemented. `PUT /api/patch/fixtures/{name}`
-(`update_patch_fixture` in app.py, backing the Patch page's Edit menu) can
-re-address a fixture (universe/start_channel) and change its profile+mode,
-but deliberately rejects changing its `name` — doing that properly means
-retargeting every group's fixture list and every rule/cue `applies_to`
-naming the fixture, the same way `retarget_group_references` already does
-for groups. `unpatch_fixture` (delete) has the same gap: it leaves the name
-behind in any group that contained it. If you implement fixture renaming,
-extend `retarget_group_reference`-style logic to plain fixture-name tokens
-(not just `"group:<name>"` ones) and wire it into both places.
+Fixture rename **is** implemented now: `PUT /api/patch/fixtures/{name}`
+accepts a `name`, and `patch_writer.retarget_fixture_references()` follows it
+into group membership lists, rule `applies_to`, and cue-assignment
+`applies_to`. `unpatch_fixture` (delete) still leaves the name behind in any
+group that listed it — that's the remaining gap.
+
+Both add and update also reject **address collisions** now
+(`config.conflicts_for`): a fixture patched over another's channels used to
+be silently accepted, with the second one quietly taking the owner map and
+vanishing from the grids while still being compliance-checked.
+`GET /api/patch/conflicts` (`config.channel_conflicts`) reports overlaps that
+already exist in a config from before that check.
 
 The Edit menu also only supports fixtures patched via a library profile +
 mode. A fixture using an inline `channels: {role: absolute_channel}` map
@@ -206,6 +263,55 @@ enum — importers can introduce fixture-specific roles freely. Rules match
 roles by exact string, so a profile calling it `dimmer` and a rule saying
 `intensity` simply won't match. (Note the live config uses `dimmer`, not
 `intensity`.)
+
+## Compliance report (judging every cue at once)
+
+The Report tab (`GET /api/report`, `ComplianceEngine.generate_compliance_report`
+in engine.py) is a frozen, timestamped snapshot that judges **every** cue
+against current live DMX at once, each as if it alone were active — unlike
+`snapshot()` (and the Monitor page), which only ever evaluates whichever
+cue is actually selected via `active_cue_name`. It's generated on demand,
+not live-updating, and doesn't touch `active_cue_name` or any other state —
+purely a read.
+
+**Per-cue evaluation** (`_rule_bindings_for_cue` + `_evaluate_cue_compliance`):
+every always-active rule (targeted by its own `applies_to`) plus every rule
+*that specific cue* assigns (targeted by that assignment's `applies_to`),
+deduped by rule id — the exact same combination `_rules_for` already builds
+for the real active cue, just generalized to an arbitrary cue.
+
+**Status is one of three values, not two:**
+
+- `"unconfigured"` — this cue has **zero** applicable rules at all, its own
+  assignments *and* always-active ones combined. This is deliberately
+  narrower than "this cue has no rule_assignments of its own": every cue
+  automatically inherits all always-active rules regardless of its own
+  configuration, so if any always-active rule is currently violated, that
+  has to surface as a real `"violation"` — marking the cue neutral/gray
+  would hide a genuine problem behind a "nothing to see here" badge. In
+  practice `"unconfigured"` only fires for a project with no always-active
+  rules defined anywhere yet.
+- `"violation"` — at least one applicable rule's entry is failing somewhere
+  among its target fixtures.
+- `"compliant"` — otherwise.
+
+**Violation reporting is two-tier, on purpose:** the headline
+(`rule_reports[].channels`) lists the *distinct channel roles* failing
+anywhere among a rule's target fixtures — e.g. a rule named "House Blue 65%"
+targeting a group renders as "House Blue 65% — intensity out of range, red
+out of range", not one line per fixture. `channels` is explicitly reordered
+to match the rule's own `entries` sequence rather than fixture-discovery
+order (which fixture happens to violate first would otherwise make the same
+rule print its channels in a different order between report runs). Which
+*specific* fixture(s) and their actual values live in `rule_reports[].violations`,
+rendered as expandable detail in the frontend (`.report-rule-toggle`) rather
+than inline — deliberately not shown up front, per how this was scoped.
+
+`engine.py`'s per-fixture DMX decode (`data[chan-1]` from the raw universe
+buffer) was factored into `_decode_fixture_values()` specifically so the
+report and `snapshot()` share it rather than drifting into two copies of
+the same channel-indexing logic — if you touch one, check the other still
+agrees (verified behavior-identical when this was split out).
 
 ## Backup & restore (moving setup between computers)
 

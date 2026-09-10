@@ -13,11 +13,29 @@ the commented-out example entries in the default template) get replaced the
 first time that block is edited via the API/dashboard. Comments elsewhere in
 the file are unaffected.
 """
+import functools
 import re
+import threading
 
 import yaml
 
-from .config import retarget_group_reference
+from .config import retarget_fixture_reference, retarget_group_reference
+from .paths import atomic_write_text, read_text_lenient
+
+# Every writer below is a read-modify-write cycle over the same file, and
+# FastAPI runs sync endpoints on a threadpool -- two dashboard requests
+# landing together would otherwise interleave and silently drop one edit.
+# Reentrant because some writers (restore_full_config) call others.
+_config_lock = threading.RLock()
+
+
+def _serialized(fn):
+    """Serializes a writer's whole read-modify-write cycle against _config_lock."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _config_lock:
+            return fn(*args, **kwargs)
+    return wrapper
 
 # Preferred key order when re-serializing entries, purely cosmetic.
 _FIXTURE_KEY_ORDER = ["name", "universe", "start_channel", "profile", "mode", "channels"]
@@ -85,35 +103,35 @@ def _replace_list_block(text: str, key: str, new_block: str) -> str:
 
 # ── fixtures ─────────────────────────────────────────────────────────────
 
+@_serialized
 def add_fixture(config_path: str, fixture_dict: dict):
     add_fixtures(config_path, [fixture_dict])
 
 
+@_serialized
 def add_fixtures(config_path: str, fixture_dicts: list):
     """Adds several fixtures in a single read-modify-write cycle -- used for
     'quantity > 1' patches so N fixtures don't trigger N separate file writes."""
     if not fixture_dicts:
         return
 
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     fixtures = _read_list_block(text, "fixtures")
     fixtures.extend(_ordered(f, _FIXTURE_KEY_ORDER) for f in fixture_dicts)
     new_text = _replace_list_block(text, "fixtures", _render_list_block("fixtures", fixtures))
 
-    with open(config_path, "w") as fh:
-        fh.write(new_text)
+    atomic_write_text(config_path, new_text)
 
 
+@_serialized
 def update_fixture(config_path: str, name: str, raw_fields: dict) -> bool:
     """Replaces the patched-fixture entry named `name` with `raw_fields` (a
     full patch.yaml-shaped fixture dict, including its `name` key) --
     a wholesale replace rather than a merge, so switching a fixture between
     a library profile and an inline `channels` map doesn't leave a stale key
     from the shape it used before. Returns True if found."""
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     fixtures = _read_list_block(text, "fixtures")
     found = False
@@ -126,42 +144,40 @@ def update_fixture(config_path: str, name: str, raw_fields: dict) -> bool:
         return False
 
     new_text = _replace_list_block(text, "fixtures", _render_list_block("fixtures", fixtures))
-    with open(config_path, "w") as fh:
-        fh.write(new_text)
+    atomic_write_text(config_path, new_text)
 
     return True
 
 
+@_serialized
 def remove_fixture(config_path: str, name: str) -> bool:
     """Returns True if a fixture with this name was found and removed."""
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     fixtures = _read_list_block(text, "fixtures")
     remaining = [f for f in fixtures if f.get("name") != name]
     removed = len(remaining) != len(fixtures)
 
     new_text = _replace_list_block(text, "fixtures", _render_list_block("fixtures", remaining))
-    with open(config_path, "w") as fh:
-        fh.write(new_text)
+    atomic_write_text(config_path, new_text)
 
     return removed
 
 
 # ── rules (shared pool) ──────────────────────────────────────────────────
 
+@_serialized
 def add_rule(config_path: str, rule_dict: dict):
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     rules = _read_list_block(text, "rules")
     rules.append(_ordered_rule(rule_dict))
     new_text = _replace_list_block(text, "rules", _render_list_block("rules", rules))
 
-    with open(config_path, "w") as fh:
-        fh.write(new_text)
+    atomic_write_text(config_path, new_text)
 
 
+@_serialized
 def update_rule(config_path: str, rule_id: str, updated_fields: dict) -> bool:
     """Merges updated_fields into the existing rule dict with this id.
     Returns True if found.
@@ -172,8 +188,7 @@ def update_rule(config_path: str, rule_id: str, updated_fields: dict) -> bool:
     the rewrite lands cleanly on the new shape instead of leaving stale
     fields alongside the new `entries` list (dict.update() alone wouldn't
     remove keys the new shape no longer has)."""
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     rules = _read_list_block(text, "rules")
     found = False
@@ -191,59 +206,56 @@ def update_rule(config_path: str, rule_id: str, updated_fields: dict) -> bool:
 
     ordered = [_ordered_rule(r) for r in rules]
     new_text = _replace_list_block(text, "rules", _render_list_block("rules", ordered))
-    with open(config_path, "w") as fh:
-        fh.write(new_text)
+    atomic_write_text(config_path, new_text)
 
     return True
 
 
+@_serialized
 def remove_rule(config_path: str, rule_id: str) -> bool:
     """Returns True if a rule with this id was found and removed. Does not
     touch cues -- see remove_rule_id_from_all_cues for reference cleanup."""
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     rules = _read_list_block(text, "rules")
     remaining = [r for r in rules if r.get("id") != rule_id]
     removed = len(remaining) != len(rules)
 
     new_text = _replace_list_block(text, "rules", _render_list_block("rules", remaining))
-    with open(config_path, "w") as fh:
-        fh.write(new_text)
+    atomic_write_text(config_path, new_text)
 
     return removed
 
 
 # ── cues ─────────────────────────────────────────────────────────────────
 
+@_serialized
 def add_cue(config_path: str, cue_dict: dict):
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     cues = _read_list_block(text, "cues")
     cues.append(_ordered(cue_dict, _CUE_KEY_ORDER))
     new_text = _replace_list_block(text, "cues", _render_list_block("cues", cues))
 
-    with open(config_path, "w") as fh:
-        fh.write(new_text)
+    atomic_write_text(config_path, new_text)
 
 
+@_serialized
 def remove_cue(config_path: str, name: str) -> bool:
     """Returns True if a cue with this name was found and removed."""
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     cues = _read_list_block(text, "cues")
     remaining = [c for c in cues if c.get("name") != name]
     removed = len(remaining) != len(cues)
 
     new_text = _replace_list_block(text, "cues", _render_list_block("cues", remaining))
-    with open(config_path, "w") as fh:
-        fh.write(new_text)
+    atomic_write_text(config_path, new_text)
 
     return removed
 
 
+@_serialized
 def update_cue(config_path: str, cue_name: str, description: str, rule_assignments: list,
                 new_name: str = None) -> bool:
     """Replaces a cue's description and rule_assignments together, and
@@ -254,8 +266,7 @@ def update_cue(config_path: str, cue_name: str, description: str, rule_assignmen
     don't point at cues, and the active cue is runtime-only, never
     persisted -- so a rename here is self-contained and needs no
     cross-reference cleanup the way a group or fixture rename would."""
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     cues = _read_list_block(text, "cues")
     found = False
@@ -272,18 +283,17 @@ def update_cue(config_path: str, cue_name: str, description: str, rule_assignmen
 
     ordered = [_ordered(c, _CUE_KEY_ORDER) for c in cues]
     new_text = _replace_list_block(text, "cues", _render_list_block("cues", ordered))
-    with open(config_path, "w") as fh:
-        fh.write(new_text)
+    atomic_write_text(config_path, new_text)
 
     return True
 
 
+@_serialized
 def remove_rule_id_from_all_cues(config_path: str, rule_id: str):
     """Strips any assignment referencing this rule id from every cue --
     used when that rule is deleted from the pool, so no cue is left
     pointing at a rule that no longer exists."""
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     cues = _read_list_block(text, "cues")
     changed = False
@@ -298,40 +308,38 @@ def remove_rule_id_from_all_cues(config_path: str, rule_id: str):
 
     ordered = [_ordered(c, _CUE_KEY_ORDER) for c in cues]
     new_text = _replace_list_block(text, "cues", _render_list_block("cues", ordered))
-    with open(config_path, "w") as fh:
-        fh.write(new_text)
+    atomic_write_text(config_path, new_text)
 
 
 # ── groups ───────────────────────────────────────────────────────────────
 
+@_serialized
 def add_group(config_path: str, group_dict: dict):
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     groups = _read_list_block(text, "groups")
     groups.append(_ordered(group_dict, _GROUP_KEY_ORDER))
     new_text = _replace_list_block(text, "groups", _render_list_block("groups", groups))
 
-    with open(config_path, "w") as fh:
-        fh.write(new_text)
+    atomic_write_text(config_path, new_text)
 
 
+@_serialized
 def remove_group(config_path: str, name: str) -> bool:
     """Returns True if a group with this name was found and removed."""
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     groups = _read_list_block(text, "groups")
     remaining = [g for g in groups if g.get("name") != name]
     removed = len(remaining) != len(groups)
 
     new_text = _replace_list_block(text, "groups", _render_list_block("groups", remaining))
-    with open(config_path, "w") as fh:
-        fh.write(new_text)
+    atomic_write_text(config_path, new_text)
 
     return removed
 
 
+@_serialized
 def update_group(config_path: str, name: str, fixtures: list, new_name: str = None) -> bool:
     """
     Replaces a group's fixture membership and, when `new_name` is given,
@@ -342,8 +350,7 @@ def update_group(config_path: str, name: str, fixtures: list, new_name: str = No
     retarget_group_references() so rules and cues pointing at the old
     "group:<name>" token follow it.
     """
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     groups = _read_list_block(text, "groups")
     found = False
@@ -359,32 +366,31 @@ def update_group(config_path: str, name: str, fixtures: list, new_name: str = No
 
     ordered = [_ordered(g, _GROUP_KEY_ORDER) for g in groups]
     new_text = _replace_list_block(text, "groups", _render_list_block("groups", ordered))
-    with open(config_path, "w") as fh:
-        fh.write(new_text)
+    atomic_write_text(config_path, new_text)
 
     return True
 
 
 # ── listen_ip / full-config backup & restore ────────────────────────────
 
+@_serialized
 def set_listen_ip(config_path: str, ip: str) -> bool:
     """Rewrites just the `listen_ip:` line in place, leaving the rest of the
     file (comments, fixtures, rules, ...) untouched -- the same targeted
     edit manager.py's NodeManager used to do inline. Returns True if the
     line was found and updated."""
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     new_line = f'listen_ip: "{ip}"'
     updated, count = re.subn(r'^listen_ip:.*$', new_line, text, count=1, flags=re.MULTILINE)
     if count == 0:
         return False
 
-    with open(config_path, "w") as fh:
-        fh.write(updated)
+    atomic_write_text(config_path, updated)
     return True
 
 
+@_serialized
 def restore_full_config(config_path: str, new_text: str, keep_listen_ip: str) -> None:
     """
     Wholesale-replaces patch.yaml with `new_text` -- used to restore an
@@ -395,16 +401,17 @@ def restore_full_config(config_path: str, new_text: str, keep_listen_ip: str) ->
     machine should never make it advertise the *original* machine's
     address, so the destination machine's own address always wins here.
     """
-    with open(config_path, "w") as fh:
-        fh.write(new_text)
+    atomic_write_text(config_path, new_text)
     set_listen_ip(config_path, keep_listen_ip)
 
 
+@_serialized
 def update_group_fixtures(config_path: str, name: str, fixtures: list) -> bool:
     """Back-compat shim: membership-only update."""
     return update_group(config_path, name, fixtures)
 
 
+@_serialized
 def retarget_group_references(config_path: str, old_name: str, new_name: str) -> dict:
     """
     Points every "group:<old_name>" reference at <new_name> instead, across
@@ -417,8 +424,7 @@ def retarget_group_references(config_path: str, old_name: str, new_name: str) ->
     """
     counts = {"rules": 0, "cue_assignments": 0}
 
-    with open(config_path, "r") as fh:
-        text = fh.read()
+    text = read_text_lenient(config_path)
 
     rules = _read_list_block(text, "rules")
     for rule in rules:
@@ -448,7 +454,84 @@ def retarget_group_references(config_path: str, old_name: str, new_name: str) ->
         text = _replace_list_block(text, "cues", _render_list_block("cues", ordered))
 
     if counts["rules"] or cues_changed:
-        with open(config_path, "w") as fh:
-            fh.write(text)
+        atomic_write_text(config_path, text)
 
     return counts
+
+
+@_serialized
+def retarget_fixture_references(config_path: str, old_name: str, new_name: str) -> dict:
+    """
+    Points every reference to a renamed fixture at its new name: group
+    membership lists, rules' `applies_to`, and cue assignments' `applies_to`.
+    Returns {"groups": n, "rules": n, "cue_assignments": n} counts.
+
+    A fixture name is referenced from more places than a group name is
+    (groups list their members by name, and both rules and cue assignments
+    can name a fixture directly), which is why fixture rename needed this
+    before it could be offered at all.
+    """
+    counts = {"groups": 0, "rules": 0, "cue_assignments": 0}
+    text = read_text_lenient(config_path)
+
+    groups = _read_list_block(text, "groups")
+    for group in groups:
+        members = group.get("fixtures") or []
+        if old_name in members:
+            group["fixtures"] = [new_name if m == old_name else m for m in members]
+            counts["groups"] += 1
+    if counts["groups"]:
+        ordered = [_ordered(g, _GROUP_KEY_ORDER) for g in groups]
+        text = _replace_list_block(text, "groups", _render_list_block("groups", ordered))
+
+    rules = _read_list_block(text, "rules")
+    for rule in rules:
+        rewritten, changed = retarget_fixture_reference(
+            rule.get("applies_to", "*"), old_name, new_name
+        )
+        if changed:
+            rule["applies_to"] = rewritten
+            counts["rules"] += 1
+    if counts["rules"]:
+        ordered = [_ordered_rule(r) for r in rules]
+        text = _replace_list_block(text, "rules", _render_list_block("rules", ordered))
+
+    cues = _read_list_block(text, "cues")
+    cues_changed = False
+    for cue in cues:
+        for assignment in cue.get("rule_assignments") or []:
+            rewritten, changed = retarget_fixture_reference(
+                assignment.get("applies_to", "*"), old_name, new_name
+            )
+            if changed:
+                assignment["applies_to"] = rewritten
+                counts["cue_assignments"] += 1
+                cues_changed = True
+    if cues_changed:
+        ordered = [_ordered(c, _CUE_KEY_ORDER) for c in cues]
+        text = _replace_list_block(text, "cues", _render_list_block("cues", ordered))
+
+    if counts["groups"] or counts["rules"] or cues_changed:
+        atomic_write_text(config_path, text)
+
+    return counts
+
+
+@_serialized
+def reorder_cues(config_path: str, ordered_names: list) -> bool:
+    """Rewrites the `cues:` block in the given name order. Any cue not
+    named in `ordered_names` keeps its relative position at the end, so a
+    stale ordering from the dashboard can't silently drop a cue that was
+    added in the meantime. Returns True if anything moved."""
+    text = read_text_lenient(config_path)
+    cues = _read_list_block(text, "cues")
+    by_name = {c.get("name"): c for c in cues}
+
+    reordered = [by_name[n] for n in ordered_names if n in by_name]
+    reordered += [c for c in cues if c.get("name") not in set(ordered_names)]
+    if [c.get("name") for c in reordered] == [c.get("name") for c in cues]:
+        return False
+
+    ordered = [_ordered(c, _CUE_KEY_ORDER) for c in reordered]
+    atomic_write_text(config_path, _replace_list_block(text, "cues", _render_list_block("cues", ordered)))
+    return True

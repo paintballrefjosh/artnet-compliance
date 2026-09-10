@@ -6,6 +6,13 @@ services:
   artnet-monitor:
     build: .
     network_mode: host
+    # Writable on purpose: the dashboard rewrites patch.yaml on every patch,
+    # group, rule, and cue edit. Mounting this :ro breaks every write.
     volumes:
-      - ./config:/app/config:ro
+      - ./config:/app/config
+    environment:
+      # Uncomment to require a token, which you'll want since network_mode:
+      # host exposes the dashboard on the LAN.
+      # ARTNET_AUTH_TOKEN: "change-me"
+      {}
     restart: unless-stopped

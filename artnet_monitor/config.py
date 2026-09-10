@@ -1,7 +1,10 @@
 """Loads config/patch.yaml into simple, easy-to-query Python objects."""
 from dataclasses import dataclass, field
 import uuid
+
 import yaml
+
+from .paths import read_text_lenient
 
 
 def new_rule_id() -> str:
@@ -118,6 +121,29 @@ def retarget_group_reference(applies_to, old_name: str, new_name: str):
     return rewritten, changed
 
 
+def retarget_fixture_reference(applies_to, old_name: str, new_name: str):
+    """
+    Rewrites a bare fixture-name entry in an `applies_to` value from
+    `old_name` to `new_name`, returning (new_applies_to, changed).
+
+    The fixture-name counterpart to retarget_group_reference. Only exact
+    plain-name entries match -- a "group:<name>" token naming a *group*
+    that happens to share this fixture's name is left alone.
+    """
+    if not isinstance(applies_to, list):
+        return applies_to, False
+
+    changed = False
+    rewritten = []
+    for entry in applies_to:
+        if entry == old_name:
+            rewritten.append(new_name)
+            changed = True
+        else:
+            rewritten.append(entry)
+    return rewritten, changed
+
+
 @dataclass
 class Group:
     """A named set of fixtures (e.g. "House Whites", "Stage Front"), so a
@@ -198,6 +224,49 @@ class Config:
 
     def get_group(self, name: str) -> Group | None:
         return next((g for g in self.groups if g.name == name), None)
+
+
+def channel_conflicts(fixtures: list) -> list:
+    """
+    Finds fixtures whose patched channels overlap. Returns one entry per
+    contested channel: {universe, channel, fixtures: [name, ...]}.
+
+    Overlapping addresses were silently allowed before this existed -- the
+    second fixture just quietly took over those channels in the snapshot's
+    owner map, so it vanished from the grids while still being compliance-
+    checked invisibly. Console patches genuinely do get typed wrong, so
+    this reports rather than guesses.
+    """
+    occupied = {}  # (universe, channel) -> [fixture names, in patch order]
+    for fixture in fixtures:
+        for chan in fixture.channels.values():
+            occupied.setdefault((fixture.universe, chan), []).append(fixture.name)
+
+    return [
+        {"universe": universe, "channel": chan, "fixtures": names}
+        for (universe, chan), names in sorted(occupied.items())
+        if len(names) > 1
+    ]
+
+
+def conflicts_for(fixtures: list, candidate, ignore_name: str = None) -> list:
+    """Channels `candidate` would collide with among `fixtures`, ignoring
+    the fixture named `ignore_name` (so re-addressing a fixture doesn't
+    report a conflict with its own current position). Returns
+    [{channel, universe, fixture}, ...]."""
+    taken = {}
+    for fixture in fixtures:
+        if ignore_name is not None and fixture.name == ignore_name:
+            continue
+        for chan in fixture.channels.values():
+            taken[(fixture.universe, chan)] = fixture.name
+
+    clashes = []
+    for chan in sorted(candidate.channels.values()):
+        owner = taken.get((candidate.universe, chan))
+        if owner is not None:
+            clashes.append({"universe": candidate.universe, "channel": chan, "fixture": owner})
+    return clashes
 
 
 def sequential_addresses(universe: int, start_channel: int, channels_per_unit: int,
@@ -313,9 +382,7 @@ def build_cue(raw: dict) -> Cue:
 
 
 def load_config(path: str, library=None) -> Config:
-    with open(path, "r") as fh:
-        raw = yaml.safe_load(fh)
-    return parse_config(raw, library=library)
+    return parse_config(yaml.safe_load(read_text_lenient(path)), library=library)
 
 
 def parse_config(raw: dict, library=None) -> Config:

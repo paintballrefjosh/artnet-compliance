@@ -1,12 +1,15 @@
 import asyncio
 import io
+import os
 import json
+import secrets
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -14,12 +17,16 @@ from pydantic import BaseModel
 from .. import patch_writer
 from ..config import (
     build_cue, build_cue_assignment, build_fixture, build_group, build_rule,
-    build_rule_entry, parse_config, retarget_group_reference, sequential_addresses,
+    build_rule_entry, channel_conflicts, conflicts_for, parse_config,
+    retarget_fixture_reference,
+    retarget_group_reference, sequential_addresses,
 )
 from ..fixture_library import ofl_search
 from ..fixture_library.ofl_import import fetch_ofl_fixture
 from ..fixture_library.schema import FixtureProfile
 from ..netiface import list_ipv4_interfaces
+from ..paths import read_text_lenient, resolve_within, safe_filename
+from ..report_store import ReportStore
 
 BACKUP_APP_ID = "artnet-compliance-monitor"
 BACKUP_FORMAT_VERSION = 1
@@ -54,16 +61,15 @@ class PatchFixtureRequest(BaseModel):
 
 
 class PatchFixtureUpdateRequest(BaseModel):
-    """Re-addresses or re-profiles an already-patched fixture. The name
-    can't be changed here -- renaming would need to retarget every group
-    membership and rule/cue applies_to naming this fixture (the same
-    reference-cleanup group renaming already does for "group:<name>"
-    tokens), which isn't implemented for fixture names yet."""
+    """Re-addresses, re-profiles, and/or renames an already-patched fixture.
+    A rename retargets every group membership and rule/cue `applies_to`
+    naming it (see patch_writer.retarget_fixture_references)."""
     universe: int
     start_channel: int
     profile: str | None = None
     mode: str | None = None
     channels: dict | None = None
+    name: str | None = None  # set to rename; omit to leave the name alone
 
 
 class RuleEntryRequest(BaseModel):
@@ -103,6 +109,14 @@ def _validate_cue_name(name: str) -> str | None:
     if not name.strip():
         return "A cue needs a name."
     return None
+
+
+class CueReorderRequest(BaseModel):
+    names: list[str]
+
+
+class SaveReportRequest(BaseModel):
+    label: str = ""
 
 
 class ActiveCueRequest(BaseModel):
@@ -151,9 +165,51 @@ def rule_to_dict(rule) -> dict:
     }
 
 
-def create_app(engine, manager, library, config_path: str) -> FastAPI:
+def create_app(engine, manager, library, config_path: str, auth_token: str = None) -> FastAPI:
     app = FastAPI()
+    reports = ReportStore(os.path.dirname(os.path.abspath(config_path)) or ".")
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+    @app.middleware("http")
+    async def guard_requests(request: Request, call_next):
+        """Two gates in front of everything.
+
+        1. Cross-origin writes are refused. The JSON endpoints are already
+           incidentally protected (a cross-origin JSON POST triggers a CORS
+           preflight nothing here answers), but multipart/form-data is a
+           CORS *simple* request -- no preflight -- so without this a page
+           on any other site could silently POST a crafted backup .zip to
+           localhost and replace the whole configuration. The attacker
+           can't read the response, but by then the damage is done.
+           Non-browser clients (curl, scripts) send no Origin and pass.
+
+        2. If an auth token is configured, every request must carry it --
+           as an X-Auth-Token header, a `token` query parameter (which then
+           gets set as a cookie so the dashboard keeps working), or that
+           cookie. Off by default, since the server binds loopback-only by
+           default; this is for when it's deliberately exposed to the LAN.
+        """
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            origin = request.headers.get("origin")
+            if origin:
+                origin_host = urlparse(origin).netloc
+                if origin_host and origin_host != request.headers.get("host"):
+                    return JSONResponse(
+                        {"error": "Cross-origin request refused."}, status_code=403
+                    )
+
+        if auth_token:
+            supplied = (request.headers.get("x-auth-token")
+                        or request.query_params.get("token")
+                        or request.cookies.get("artnet_token"))
+            if not secrets.compare_digest(str(supplied or ""), auth_token):
+                return JSONResponse({"error": "Authentication required."}, status_code=401)
+            response = await call_next(request)
+            if request.query_params.get("token") == auth_token:
+                response.set_cookie("artnet_token", auth_token, httponly=True, samesite="strict")
+            return response
+
+        return await call_next(request)
 
     @app.get("/")
     def index():
@@ -168,6 +224,38 @@ def create_app(engine, manager, library, config_path: str) -> FastAPI:
     @app.get("/api/snapshot")
     def snapshot():
         return engine.snapshot()
+
+    @app.get("/api/patch/conflicts")
+    def patch_conflicts():
+        """Existing address overlaps. New/edited fixtures are rejected
+        outright, but configs patched before that check existed (or edited
+        by hand) can still contain them, so the Patch page surfaces them."""
+        return {"conflicts": channel_conflicts(engine.config.fixtures)}
+
+    @app.get("/api/report")
+    def compliance_report():
+        """Generates a report without saving it."""
+        return engine.generate_compliance_report()
+
+    @app.post("/api/reports")
+    def save_report(payload: SaveReportRequest):
+        """Generates a report and keeps it as a dated record."""
+        return reports.save(engine.generate_compliance_report(), label=payload.label.strip())
+
+    @app.get("/api/reports")
+    def list_reports():
+        return {"reports": reports.list()}
+
+    @app.get("/api/reports/{report_id}")
+    def get_report(report_id: str):
+        report = reports.get(report_id)
+        if report is None:
+            return JSONResponse({"error": f"No saved report '{report_id}'."}, status_code=404)
+        return report
+
+    @app.delete("/api/reports/{report_id}")
+    def delete_report(report_id: str):
+        return {"success": reports.delete(report_id)}
 
     @app.get("/api/interfaces")
     def interfaces():
@@ -313,6 +401,22 @@ def create_app(engine, manager, library, config_path: str) -> FastAPI:
             except (KeyError, ValueError) as e:
                 return JSONResponse({"error": str(e)}, status_code=400)
 
+        # Reject address collisions rather than silently letting the new
+        # fixture take over channels another one already owns. Checked
+        # against everything already patched *and* against the rest of this
+        # same batch, so a quantity>1 add can't overlap itself either.
+        for i, fixture in enumerate(built):
+            against = engine.config.fixtures + built[:i]
+            clashes = conflicts_for(against, fixture)
+            if clashes:
+                first = clashes[0]
+                return JSONResponse(
+                    {"error": f"'{fixture.name}' would overlap '{first['fixture']}' at "
+                              f"universe {first['universe']} channel {first['channel']}"
+                              f"{f' (+{len(clashes) - 1} more)' if len(clashes) > 1 else ''}."},
+                    status_code=400,
+                )
+
         engine.config.fixtures.extend(built)
         patch_writer.add_fixtures(config_path, raw_entries)
         return {"success": True, "added": [f.name for f in built]}
@@ -323,16 +427,65 @@ def create_app(engine, manager, library, config_path: str) -> FastAPI:
         if existing is None:
             return JSONResponse({"error": f"No fixture named '{name}' is patched."}, status_code=404)
 
+        new_name = payload.name.strip() if payload.name is not None else None
+        renaming = new_name is not None and new_name != name
+        if renaming:
+            if not new_name:
+                return JSONResponse({"error": "A fixture needs a name."}, status_code=400)
+            if any(f.name == new_name for f in engine.config.fixtures):
+                return JSONResponse(
+                    {"error": f"A fixture named '{new_name}' is already patched."},
+                    status_code=400,
+                )
+
         raw = {k: v for k, v in payload.model_dump().items() if v is not None}
-        raw["name"] = name
+        raw["name"] = new_name if renaming else name
         try:
             updated = build_fixture(raw, library)
         except (KeyError, ValueError) as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
+        # ignore_name: re-addressing a fixture shouldn't collide with where
+        # it currently sits, only with everything else.
+        clashes = conflicts_for(engine.config.fixtures, updated, ignore_name=name)
+        if clashes:
+            first = clashes[0]
+            return JSONResponse(
+                {"error": f"That address would overlap '{first['fixture']}' at "
+                          f"universe {first['universe']} channel {first['channel']}"
+                          f"{f' (+{len(clashes) - 1} more)' if len(clashes) > 1 else ''}."},
+                status_code=400,
+            )
+
         engine.config.fixtures = [updated if f.name == name else f for f in engine.config.fixtures]
         patch_writer.update_fixture(config_path, name, raw)
-        return {"success": True, "name": updated.name}
+
+        retargeted = {"groups": 0, "rules": 0, "cue_assignments": 0}
+        if renaming:
+            # A fixture is named directly by group membership lists and by
+            # rule/cue applies_to entries -- all of them have to follow the
+            # rename or they'd silently stop matching anything.
+            for group in engine.config.groups:
+                if name in group.fixtures:
+                    group.fixtures = [new_name if f == name else f for f in group.fixtures]
+                    retargeted["groups"] += 1
+            for rule in engine.config.rules:
+                rewritten, changed = retarget_fixture_reference(rule.applies_to, name, new_name)
+                if changed:
+                    rule.applies_to = rewritten
+                    retargeted["rules"] += 1
+            for cue in engine.config.cues:
+                for assignment in cue.rule_assignments:
+                    rewritten, changed = retarget_fixture_reference(
+                        assignment.applies_to, name, new_name
+                    )
+                    if changed:
+                        assignment.applies_to = rewritten
+                        retargeted["cue_assignments"] += 1
+            patch_writer.retarget_fixture_references(config_path, name, new_name)
+
+        return {"success": True, "name": updated.name, "renamed": renaming,
+                "retargeted": retargeted}
 
     @app.delete("/api/patch/fixtures/{name}")
     def unpatch_fixture(name: str):
@@ -471,6 +624,20 @@ def create_app(engine, manager, library, config_path: str) -> FastAPI:
         if engine.active_cue_name == name:
             engine.set_active_cue(None)
         return {"success": removed}
+
+    @app.post("/api/cues/reorder")
+    def reorder_cues(payload: CueReorderRequest):
+        known = {c.name for c in engine.config.cues}
+        unknown = [n for n in payload.names if n not in known]
+        if unknown:
+            return JSONResponse({"error": f"Unknown cue(s): {', '.join(unknown)}"}, status_code=400)
+
+        by_name = {c.name: c for c in engine.config.cues}
+        reordered = [by_name[n] for n in payload.names]
+        reordered += [c for c in engine.config.cues if c.name not in set(payload.names)]
+        engine.config.cues = reordered
+        patch_writer.reorder_cues(config_path, payload.names)
+        return {"success": True, "order": [c.name for c in engine.config.cues]}
 
     @app.post("/api/active-cue")
     def set_active_cue(payload: ActiveCueRequest):
@@ -614,8 +781,7 @@ def create_app(engine, manager, library, config_path: str) -> FastAPI:
                 "format_version": BACKUP_FORMAT_VERSION,
                 "exported_at": datetime.now(timezone.utc).isoformat(),
             }, indent=2))
-            with open(config_path, "r") as fh:
-                zf.writestr("patch.yaml", fh.read())
+            zf.writestr("patch.yaml", read_text_lenient(config_path))
             # Bundled profiles ship with the app itself and don't need
             # backing up; imported/custom ones only exist on this machine.
             for subdir, dir_path in (("custom", library.custom_dir), ("imported", library.imported_dir)):
@@ -683,12 +849,19 @@ def create_app(engine, manager, library, config_path: str) -> FastAPI:
         # these are the only thing that landed; patch.yaml itself and the
         # live engine are untouched below until validation succeeds.
         for rel_name, data in profile_entries:
-            parts = rel_name.split("/")
+            # Normalise "\" to "/" *before* splitting: on Windows pathlib
+            # treats backslash as a separator too, so an entry named
+            # "fixture_profiles/custom/..\..\..\evil.json" would otherwise
+            # pass a 3-part check and still escape the profiles directory.
+            parts = rel_name.replace("\\", "/").split("/")
             if len(parts) != 3 or parts[1] not in ("custom", "imported"):
                 continue
             target_dir = library.custom_dir if parts[1] == "custom" else library.imported_dir
             target_dir.mkdir(parents=True, exist_ok=True)
-            with open(target_dir / parts[2], "wb") as fh:
+            target = resolve_within(target_dir, safe_filename(parts[2]))
+            if target is None:
+                continue  # entry tried to walk out of the profiles directory
+            with open(target, "wb") as fh:
                 fh.write(data)
         library.reload()
 
@@ -737,9 +910,16 @@ def create_app(engine, manager, library, config_path: str) -> FastAPI:
     @app.websocket("/ws")
     async def ws(websocket: WebSocket):
         await websocket.accept()
+        # The channel-owner map is over half the payload but only changes
+        # when the patch does, so it's sent on the first tick and then only
+        # when it actually changes; the client caches it in between.
+        last_owners_version = None
         try:
             while True:
-                await websocket.send_text(json.dumps(engine.snapshot()))
+                owners_version = engine.owners_fingerprint()
+                snap = engine.snapshot(include_owners=owners_version != last_owners_version)
+                last_owners_version = owners_version
+                await websocket.send_text(json.dumps(snap))
                 await asyncio.sleep(0.5)  # 2 Hz push — plenty for a compliance dashboard
         except WebSocketDisconnect:
             pass
