@@ -1,0 +1,94 @@
+# Patch and compliance configuration.
+#
+# `listen_ip` — this machine's real LAN IP (not 127.0.0.1). Vista unicasts
+#               ArtDmx back to whatever address you advertise in ArtPollReply,
+#               so this has to be reachable from the Vista machine.
+#               You don't need to figure this out by hand: once the app is
+#               running, open the dashboard and use the "Advertise as"
+#               dropdown to pick the right network interface — it'll update
+#               this value and restart the Art-Net node automatically. This
+#               default is just the starting point before you've done that.
+#
+# `universes` — universe numbers as shown in Vista's UI (1-based, e.g. 1-8),
+#               not raw Art-Net wire numbers. The node handles the 0-based
+#               conversion internally when talking to the wire protocol, and
+#               splits them into groups of 4 automatically for ArtPollReply.
+#
+# `fixtures`  — each entry is a patched fixture: a `name`, `universe`, and
+#               `start_channel`, plus either:
+#                 - `profile` + `mode`: references a fixture library profile
+#                   (bundled, imported from Open Fixture Library, or one you
+#                   defined yourself) and resolves its channels automatically.
+#                 - `channels`: an inline {role: absolute_channel_number} map,
+#                   for a one-off fixture that doesn't need a library entry.
+#               The easiest way to add these is the dashboard's "Fixture
+#               Patch" panel rather than editing this by hand — see README.md.
+#
+# `groups`    — named sets of fixtures (e.g. "House Whites", "Stage Front"),
+#               shown in the dashboard as "Fixture Groups". A rule's
+#               `applies_to` (or a cue's assignment target, see `cues` below)
+#               can reference a group with "group:<name>" alongside or
+#               instead of individual fixture names, so one rule can cover
+#               many fixtures at once.
+#
+# `rules`     — the shared pool of compliance thresholds, managed from the
+#               dashboard's Rules tab and scoped to a fixture *profile*
+#               (`profile_id`) rather than any specific fixture instance --
+#               e.g. "SlimPAR intensity cap" describes what's valid for that
+#               hardware, independent of which fixture or cue enforces it.
+#               Each rule has a unique `id` (auto-generated if omitted), a
+#               human-readable `name`, a `channel` role, and `max`/`min` raw
+#               DMX bounds (0-255).
+#                 - `always_active: true` — enforced no matter what, against
+#                   this rule's own `applies_to` ("*", fixture names, or
+#                   "group:<name>" entries). Use this for hard safety limits.
+#                 - `always_active: false` (the default) — has no fixed
+#                   target of its own; only enforced when a cue assigns it
+#                   to a specific fixture/group (see `cues` below), so the
+#                   same reusable rule can target different fixtures in
+#                   different cues.
+#
+# `cues`      — named, selectable sets of rule *assignments* — each entry in
+#               `rule_assignments` pairs a `rule_id` (from the pool above)
+#               with the specific `applies_to` target ("*", fixture names,
+#               or "group:<name>" entries) that rule should be checked
+#               against *for this cue*. Only one cue is "active" at a time,
+#               chosen from the dashboard's Cues tab; that choice is runtime
+#               state and isn't saved here. A cue's `rule_assignments` list
+#               can start empty — assign rules later once you know what each
+#               cue should enforce.
+
+listen_ip: "0.0.0.0"   # <-- set to this machine's real LAN IP before running
+
+universes: [1, 2, 3, 4, 5, 6, 7, 8]   # <-- adjust to match what you patch in Vista (1-based)
+
+fixtures: []
+  # - name: ""
+  #   universe: 1
+  #   start_channel: 1
+  #   channels:
+  #     intensity: 1
+  #     red: 2
+  #     green: 3
+  #     blue: 4
+
+groups: []
+  # - name: ""
+  #   fixtures: []
+
+rules: []
+  # - id: "rule-example1"
+  #   name: ""
+  #   profile_id: ""
+  #   description: ""
+  #   applies_to: "*"
+  #   channel: intensity
+  #   max: 255
+  #   always_active: true
+
+cues: []
+  # - name: ""
+  #   description: ""
+  #   rule_assignments: []
+  #     # - rule_id: "rule-example1"
+  #     #   applies_to: "*"

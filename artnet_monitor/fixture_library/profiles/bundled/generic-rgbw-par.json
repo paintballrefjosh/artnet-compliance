@@ -1,0 +1,13 @@
+{
+  "id": "bundled:generic/rgbw-par",
+  "manufacturer": "Generic",
+  "model": "RGBW Par (4/5/6-channel)",
+  "source": "bundled",
+  "categories": ["Color Changer", "Dimmer"],
+  "notes": "Common generic RGBW LED par layout. Many budget/no-name pars follow this exact channel order — check your fixture's manual to confirm before relying on it for compliance checks.",
+  "modes": {
+    "4-channel": ["red", "green", "blue", "white"],
+    "5-channel": ["intensity", "red", "green", "blue", "white"],
+    "6-channel": ["intensity", "red", "green", "blue", "white", "strobe"]
+  }
+}

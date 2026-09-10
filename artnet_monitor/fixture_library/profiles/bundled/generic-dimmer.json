@@ -1,0 +1,11 @@
+{
+  "id": "bundled:generic/dimmer",
+  "manufacturer": "Generic",
+  "model": "Single-Channel Dimmer",
+  "source": "bundled",
+  "categories": ["Dimmer"],
+  "notes": "Basic single-channel intensity-only dimmer/blinder, e.g. a conventional fixture on a dimmer pack.",
+  "modes": {
+    "1-channel": ["intensity"]
+  }
+}

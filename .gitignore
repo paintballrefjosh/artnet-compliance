@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environment (created by setup.bat / setup.sh)
+venv/
+
+# Personal configuration and fixture library -- venue-specific data, not
+# part of the app itself. config/patch.yaml.default (the shipped template)
+# is intentionally NOT listed here and stays tracked; only the real,
+# per-installation files under config/ are ignored. See README.md's
+# "Where your data lives, and updating safely" section.
+config/patch.yaml
+config/fixture_profiles/custom/
+config/fixture_profiles/imported/
+config/fixture_profiles/ofl_index_cache.json
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

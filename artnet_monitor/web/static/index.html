@@ -1,0 +1,2780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Art-Net Compliance Monitor</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #111; color: #eee; margin: 0; padding: 24px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  h2 { font-size: 14px; color: #ddd; margin: 0 0 12px 0; }
+  h3 { font-size: 14px; }
+  #monitorStatus { color: #888; font-size: 13px; margin-bottom: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .card { border-radius: 10px; padding: 14px 16px; background: #1c1c1c; border: 1px solid #2a2a2a; }
+  .card.violation { border-color: #c0392b; background: #2a1414; }
+  .name { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+  .vals { font-size: 12px; color: #bbb; display: flex; gap: 10px; flex-wrap: wrap; }
+  .val { background: #262626; border-radius: 6px; padding: 2px 8px; display: inline-block; margin: 2px; }
+  .viol { margin-top: 8px; color: #ff8a80; font-size: 12px; }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; margin-left: 8px; }
+  .badge.ok { background: #1e3a1e; color: #7ed17e; }
+  .badge.bad { background: #3a1e1e; color: #ff8a80; }
+  .iface-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 18px;
+    background: #1c1c1c; border: 1px solid #2a2a2a; border-radius: 10px; padding: 10px 14px; }
+  .iface-bar label { font-size: 12px; color: #999; }
+  .iface-bar select { background: #262626; color: #eee; border: 1px solid #3a3a3a;
+    border-radius: 6px; padding: 6px 10px; font-size: 13px; flex: 1; max-width: 420px; }
+  .iface-bar button { background: #2563eb; color: white; border: none; border-radius: 6px;
+    padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .iface-bar button:disabled { background: #3a3a3a; cursor: default; }
+  .iface-msg { font-size: 12px; color: #888; }
+
+  /* top-level page navigation */
+  .nav-tabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid #2a2a2a; }
+  .nav-tab { padding: 8px 16px; font-size: 13px; cursor: pointer; color: #999;
+    border-bottom: 2px solid transparent; }
+  .nav-tab.active { color: #eee; border-bottom-color: #2563eb; }
+  .page { display: none; }
+  .page.active { display: block; }
+
+  .panel { background: #1c1c1c; border: 1px solid #2a2a2a; border-radius: 10px;
+    padding: 16px; margin-bottom: 18px; }
+  .row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 10px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 11px; color: #999; }
+  .field input, .field select { background: #262626; color: #eee; border: 1px solid #3a3a3a;
+    border-radius: 6px; padding: 6px 10px; font-size: 13px; min-width: 140px; }
+  .btn { background: #2563eb; color: white; border: none; border-radius: 6px;
+    padding: 7px 14px; font-size: 13px; cursor: pointer; height: 32px; }
+  .btn.secondary { background: #3a3a3a; }
+  .btn.danger { background: #7f1d1d; padding: 3px 10px; height: auto; font-size: 11px; }
+  .btn:disabled { background: #3a3a3a; cursor: default; }
+
+  /* inner sub-tabs (Patch panel: From library / Import / Custom) */
+  .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+  .tab { padding: 6px 12px; font-size: 12px; border-radius: 6px 6px 0 0; cursor: pointer;
+    color: #999; background: #161616; }
+  .tab.active { background: #262626; color: #eee; }
+  .tabpage { display: none; }
+  .tabpage.active { display: block; }
+
+  .channel-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  .msg { font-size: 12px; color: #888; margin-top: 6px; }
+  .msg.error { color: #ff8a80; }
+  .msg.success { color: #7ed17e; }
+  /* one channel-threshold row inside a rule package's entries list */
+  .rule-entries { display: flex; flex-direction: column; gap: 10px; }
+  .rule-entry-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+    border-bottom: 1px solid #2a2a2a; padding-bottom: 10px; }
+  .rule-entries .rule-entry-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .range-slider { position: relative; width: 160px; height: 20px; flex-shrink: 0; margin-top: 6px; }
+  .range-track-bg { position: absolute; top: 8px; left: 0; width: 100%; height: 4px;
+    background: #3a3a3a; border-radius: 2px; }
+  .range-track-fill { position: absolute; top: 8px; height: 4px; background: #2563eb; border-radius: 2px; }
+  .range-slider input[type=range] { position: absolute; top: 0; left: 0; width: 100%; height: 20px;
+    margin: 0; background: none; pointer-events: none; -webkit-appearance: none; appearance: none;
+    /* shed the `.field input` form-field chrome, which would offset the track */
+    padding: 0; border: none; min-width: 0; box-sizing: border-box; }
+  .range-slider input[type=range]::-webkit-slider-runnable-track { background: transparent; height: 4px; }
+  .range-slider input[type=range]::-moz-range-track { background: transparent; height: 4px; border: none; }
+  .range-slider input[type=range]::-webkit-slider-thumb { pointer-events: auto; -webkit-appearance: none;
+    appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #2563eb;
+    cursor: pointer; margin-top: 3px; border: 2px solid #111; }
+  .range-slider input[type=range]::-moz-range-thumb { pointer-events: auto; width: 14px; height: 14px;
+    border-radius: 50%; background: #2563eb; cursor: pointer; border: 2px solid #111; }
+  .ofl-result { display: flex; justify-content: space-between; align-items: center;
+    background: #161616; border-radius: 6px; padding: 8px 12px; font-size: 12px; }
+  .ofl-result .name { font-weight: 600; font-size: 13px; margin: 0; }
+  .ofl-result .mfr { color: #999; font-weight: 400; }
+
+  /* universe channel grid -- shared by the Monitor page (live compliance
+     colors, redrawn 2x/second) and the Patch page (static, shows what's
+     patched instead). Sizing and the fixture-name/hover-group overlays are
+     shared here; each page layers its own meaning onto cell background
+     color separately, below. */
+  .chan-grid { display: grid; grid-template-columns: repeat(32, 1fr); gap: 2px;
+    background: #000; padding: 4px; border-radius: 6px; width: max-content; }
+  #universeGrids { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+  .universe-panel { width: fit-content; }
+  .chan-cell { width: 16px; height: 16px; cursor: pointer; border: 1px solid #222;
+    box-sizing: border-box; background: #1a1a1a; position: relative; overflow: visible; }
+  .chan-cell.patched { border-color: #3a6bd6; }
+  .chan-cell.violation { border-color: #e53935; box-shadow: 0 0 3px #e53935; }
+
+  /* channel number, every cell */
+  .chan-num { position: absolute; top: 1px; left: 2px; font-size: 7px; line-height: 1;
+    color: rgba(255,255,255,0.4); pointer-events: none; user-select: none; }
+
+  /* hovering any cell belonging to a fixture highlights every cell it owns */
+  .chan-cell.hl { outline: 2px solid #ffb020; outline-offset: -1px; z-index: 3; }
+
+  /* the lowest channel a fixture owns gets its name overlaid, overflowing
+     rightward across the fixture's other cells -- the elevated z-index
+     (only on this one cell) is what lets that overflow paint on top of the
+     later sibling cells instead of underneath them. */
+  .chan-cell.label-anchor { z-index: 5; }
+  .fixture-label { position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+    white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+    font-size: 10px; font-weight: 600; color: #dce8ff; background: rgba(15,20,35,0.88);
+    padding: 1px 5px 1px 3px; border-radius: 0 4px 4px 0; pointer-events: none; }
+
+  /* Patch page: no live values/compliance to show, so a filled cell (rather
+     than Monitor's border-only "patched" treatment) is what "patched" means
+     here. Also not redrawn 2x/second like Monitor's, so it can afford to be
+     roomier. */
+  #patchUniverseGrids { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+  #patchUniverseGrids .chan-cell { width: 20px; height: 20px; }
+  #patchUniverseGrids .chan-cell.patched { background: #24304d; }
+  #patchUniverseGrids .chan-cell.patched:hover { background: #2e3d63; }
+  #patchUniverseGrids .chan-cell.patched .chan-num { color: rgba(255,255,255,0.5); }
+  .legend { display: flex; gap: 16px; margin: 10px 0; font-size: 11px; color: #999; }
+  .legend .swatch { display: inline-block; width: 11px; height: 11px; border-radius: 2px;
+    margin-right: 5px; vertical-align: middle; }
+
+  /* modal */
+  .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    align-items: center; justify-content: center; z-index: 1000; }
+  .modal-backdrop.open { display: flex; }
+  .modal { background: #1c1c1c; border: 1px solid #333; border-radius: 10px; padding: 20px;
+    min-width: 280px; max-width: 420px; position: relative; }
+  .modal-close { position: absolute; top: 8px; right: 12px; background: none; border: none;
+    color: #999; font-size: 18px; cursor: pointer; }
+
+  /* toast notifications: bottom-right, stacking, click or 5s to dismiss */
+  .toast-stack { position: fixed; right: 16px; bottom: 16px; z-index: 1100;
+    display: flex; flex-direction: column-reverse; gap: 8px;
+    max-width: min(360px, calc(100vw - 32px)); pointer-events: none; }
+  .toast { pointer-events: auto; cursor: pointer; background: #1c1c1c;
+    border: 1px solid #333; border-left: 3px solid #2563eb; border-radius: 8px;
+    padding: 12px 32px 12px 14px; font-size: 13px; color: #eee; line-height: 1.4;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4); position: relative;
+    opacity: 0; transform: translateY(8px); transition: opacity 0.18s ease, transform 0.18s ease; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.leaving { opacity: 0; transform: translateY(4px); }
+  .toast.error { border-left-color: #c0392b; }
+  .toast-close { position: absolute; top: 6px; right: 8px; background: none; border: none;
+    color: #888; font-size: 14px; cursor: pointer; line-height: 1; padding: 4px; }
+  .toast-close:hover { color: #ccc; }
+
+  /* reusable form modal (add / edit / delete dialogs) */
+  .modal.form-modal { width: 520px; max-width: calc(100vw - 40px);
+    max-height: calc(100vh - 60px); display: flex; flex-direction: column; }
+  /* wide variant for dialogs holding a long checklist, so the list packs into
+     columns instead of overflowing into a scrollbar */
+  .modal.form-modal.wide { width: 960px; }
+  .modal.form-modal h3 { margin: 0 24px 12px 0; font-size: 15px; }
+  /* Focus rings paint outside an element's border box, and this is a scroll
+     container (overflow-y:auto makes the x-axis clip too), so a field sitting
+     flush against an edge would have its highlight sliced off. The padding
+     gives the ring room; the matching negative margin keeps the layout put. */
+  .modal-body { overflow-y: auto; flex: 1; padding: 4px; margin: -4px; }
+  /* These inputs are content-box, so a width:100% field would overflow by its
+     padding + border — enough to turn .modal-body (overflow-y:auto, which
+     makes the x-axis a scroll container too) into a horizontal scroller. */
+  .form-modal .field input, .form-modal .field select { box-sizing: border-box; }
+  .modal-footer { display: flex; justify-content: flex-end; gap: 8px; align-items: center;
+    margin-top: 16px; padding-top: 14px; border-top: 1px solid #2a2a2a; }
+  .modal-footer .btn { height: 32px; padding: 7px 14px; font-size: 13px; }
+  .modal-footer .spacer { flex: 1; }
+
+  /* page header: title on the left, primary action on the right */
+  .page-header { display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 16px; margin-bottom: 14px; }
+  .page-header h2 { margin: 0 0 4px 0; font-size: 15px; }
+  .page-header .msg { margin: 0; max-width: 640px; }
+
+  /* record tables */
+  .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .data-table th { text-align: left; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.04em; color: #888; font-weight: 600;
+    padding: 0 12px 8px; border-bottom: 1px solid #2a2a2a; }
+  .data-table td { padding: 10px 12px; border-bottom: 1px solid #232323; vertical-align: top; }
+  .data-table tbody tr:last-child td { border-bottom: none; }
+  .data-table tbody tr:hover { background: #191919; }
+  .data-table .col-actions { width: 1%; white-space: nowrap; text-align: right; }
+  .data-table .row-name { font-weight: 600; }
+  .row-actions { display: inline-flex; gap: 6px; }
+  .btn.small { height: 28px; padding: 4px 12px; font-size: 12px; }
+  .btn.danger.small { height: 28px; padding: 4px 12px; font-size: 12px; }
+  .chip { display: inline-block; background: #262626; border-radius: 5px;
+    padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 12px; color: #ccc; }
+  .empty { color: #888; font-size: 13px; padding: 16px 12px; }
+  /* Vertical scrolling is fine here, horizontal never is: auto-fill columns
+     plus min-width:0 on the items means the list reflows instead of
+     overflowing sideways, and the list itself takes the scrollbar so the
+     filter box above it stays pinned. */
+  .checklist { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 2px 16px; max-height: 340px; overflow-y: auto; overflow-x: hidden;
+    /* left/right room so a focused checkbox's ring isn't clipped by overflow */
+    padding: 3px 4px; margin-left: -4px; }
+  .checklist label { display: flex; align-items: center; gap: 7px;
+    font-size: 13px; padding: 2px 0; min-width: 0; cursor: pointer; }
+  .checklist label[hidden] { display: none; }
+  .checklist label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Without this the generic `.field input` rule gives each checkbox a 140px
+     min-width and full form-field chrome, squeezing the name down to "H…". */
+  .checklist input[type=checkbox] { flex: none; min-width: 0; width: 14px; height: 14px;
+    margin: 0; padding: 0; border-radius: 0; }
+  .checklist-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .checklist-tools .checklist-search { flex: 1; max-width: 280px; }
+  .checklist-count { font-size: 12px; color: #888; white-space: nowrap; }
+
+  /* "applies to" target picker: shared by the Cues per-rule target and the
+     Rules "Applies to" field — searchable multi-select, groups before fixtures */
+  .target-picker-list { margin-top: 8px; }
+  .target-scroll { max-height: 200px; }
+  .cue-rule-target .target-scroll { max-height: 150px; }
+  .checklist-row-inline { display: flex; align-items: center; gap: 7px;
+    font-size: 12px; padding: 3px 0; cursor: pointer; }
+  .checklist-row-inline[hidden] { display: none; }
+
+  /* single-column variant, for rows that carry their own controls (the cue
+     rule list pairs each checkbox with a target select) */
+  .scroll-list { max-height: 340px; overflow-y: auto; overflow-x: hidden;
+    padding: 3px 4px; margin-left: -4px; }
+  .scroll-list .group-header { font-weight: 600; font-size: 11px; color: #999;
+    margin: 12px 0 6px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .scroll-list .group-header:first-child { margin-top: 0; }
+  .scroll-list .group-header[hidden] { display: none; }
+  .cue-rule-row { margin: 5px 0; }
+  .cue-rule-row[hidden] { display: none; }
+  .cue-rule-row > label { display: flex; align-items: center; gap: 7px;
+    font-size: 12px; cursor: pointer; }
+  .cue-rule-row input[type=checkbox] { flex: none; min-width: 0; width: 14px; height: 14px;
+    margin: 0; padding: 0; border-radius: 0; }
+
+  /* checkboxes must escape the generic `.field input` sizing everywhere in a
+     modal, not just inside the two checklists */
+  .form-modal input[type=checkbox] { flex: none; min-width: 0; width: 14px; height: 14px;
+    margin: 0; padding: 0; border-radius: 0; }
+  .inline-check { display: flex; align-items: center; gap: 7px; font-size: 12px;
+    color: #ccc; cursor: pointer; }
+
+  /* import-from-live-values rows: role on the left, min/max on the right */
+  .import-row { display: flex; align-items: center; gap: 12px; padding: 3px 0; }
+  .import-row[hidden] { display: none; }
+  .import-row .inline-check { flex: 1; min-width: 0; }
+  .import-row .import-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .import-fields { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .import-fields input { width: 72px; min-width: 72px; background: #262626; color: #eee;
+    border: 1px solid #3a3a3a; border-radius: 6px; padding: 4px 8px; font-size: 12px;
+    box-sizing: border-box; }
+
+  /* profile grouping inside the rules table */
+  .data-table tr.group-row td { font-weight: 600; font-size: 11px; color: #999;
+    text-transform: uppercase; letter-spacing: 0.03em; background: #171717;
+    padding: 8px 12px; border-bottom: 1px solid #2a2a2a; }
+  .data-table tr.group-row:hover td { background: #171717; }
+</style>
+</head>
+<body>
+  <h1>Art-Net Compliance Monitor</h1>
+
+  <div class="iface-bar">
+    <label for="ifaceSelect">Advertise as:</label>
+    <select id="ifaceSelect"></select>
+    <button id="ifaceApply">Apply</button>
+    <span class="iface-msg" id="ifaceMsg"></span>
+  </div>
+
+  <div class="nav-tabs">
+    <div class="nav-tab active" data-page="monitor">Monitor</div>
+    <div class="nav-tab" data-page="patch">Patch</div>
+    <div class="nav-tab" data-page="groups">Fixture Groups</div>
+    <div class="nav-tab" data-page="rules">Rules</div>
+    <div class="nav-tab" data-page="cues">Cues</div>
+    <div class="nav-tab" data-page="backup">Backup</div>
+  </div>
+
+  <!-- ============ MONITOR PAGE ============ -->
+  <div class="page active" id="page-monitor">
+    <div class="panel">
+      <div class="row" style="margin-bottom:0;">
+        <div class="field">
+          <label>Active cue</label>
+          <select id="activeCueSelect"><option value="">— None (baseline only) —</option></select>
+        </div>
+      </div>
+    </div>
+    <div id="monitorStatus">connecting…</div>
+    <div class="legend">
+      <span><span class="swatch" style="background:#2e7d32;"></span>Compliant (a rule checks it and it's passing)</span>
+      <span><span class="swatch" style="background:#c62828;"></span>Violation</span>
+      <span><span class="swatch" style="background:#6a6a6a; border:1px solid #333;"></span>Active, unchecked (value &gt; 0, no rule applies)</span>
+      <span><span class="swatch" style="background:#2a2a2a; border:1px solid #333;"></span>Idle (value = 0, no rule applies)</span>
+      <span>Blue border = patched to a fixture</span>
+    </div>
+    <div id="universeGrids"></div>
+  </div>
+
+  <!-- ============ PATCH PAGE ============ -->
+  <div class="page" id="page-patch">
+    <div class="panel">
+      <h2>Fixture Patch</h2>
+      <div class="tabs">
+        <div class="tab active" data-tab="library">From library</div>
+        <div class="tab" data-tab="import">Import from OFL</div>
+        <div class="tab" data-tab="custom">Custom Profiles</div>
+      </div>
+
+      <div class="tabpage active" id="tab-library">
+        <div class="row">
+          <div class="field">
+            <label>Profile</label>
+            <select id="profileSelect"></select>
+          </div>
+          <div class="field">
+            <label>Mode</label>
+            <select id="modeSelect"></select>
+          </div>
+          <div class="field">
+            <label>Name</label>
+            <input id="patchName" placeholder="FOH Wash 1">
+          </div>
+          <div class="field">
+            <label>Universe</label>
+            <input id="patchUniverse" type="number" min="1" value="1" style="min-width:70px;">
+          </div>
+          <div class="field">
+            <label>Start channel</label>
+            <input id="patchStartChannel" type="number" min="1" value="1" style="min-width:70px;">
+          </div>
+          <div class="field">
+            <label>Quantity</label>
+            <input id="patchQuantity" type="number" min="1" value="1" style="min-width:60px;">
+          </div>
+          <button class="btn" id="patchAddBtn">Add to patch</button>
+        </div>
+        <div class="msg" id="patchMsg"></div>
+      </div>
+
+      <div class="tabpage" id="tab-import">
+        <div class="row">
+          <div class="field" style="flex:1; min-width:280px;">
+            <label>Search Open Fixture Library</label>
+            <input id="oflSearchBox" placeholder="e.g. chauvet slimpar, or martin mac viper">
+          </div>
+        </div>
+        <div id="oflResults" style="display:flex; flex-direction:column; gap:4px; max-height:220px; overflow-y:auto;"></div>
+        <div class="msg" id="oflMsg"></div>
+      </div>
+
+      <div class="tabpage" id="tab-custom">
+        <div class="row">
+          <div class="field" style="min-width:220px;">
+            <label>Edit existing profile</label>
+            <select id="customProfileSelect"><option value="">— New profile —</option></select>
+          </div>
+          <div class="field" style="min-width:160px;">
+            <label>Mode to load</label>
+            <select id="customModeSelect"><option value="">(new mode)</option></select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Manufacturer</label><input id="customManufacturer" placeholder="Acme"></div>
+          <div class="field"><label>Model</label><input id="customModel" placeholder="Mega Blinder 9000"></div>
+          <div class="field"><label>Mode name</label><input id="customModeName" value="default"></div>
+        </div>
+        <p class="msg">Editing an existing profile only replaces the mode named above — its other modes are left untouched. Type a new mode name to add another mode instead of editing one.</p>
+        <div id="customChannels"></div>
+        <div class="row">
+          <button class="btn secondary" id="customAddChannelBtn">+ Add channel</button>
+          <button class="btn" id="customSaveBtn">Save profile</button>
+          <button class="btn danger" id="customDeleteBtn" style="display:none;">Delete profile</button>
+        </div>
+        <div class="msg" id="customMsg"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Patched Fixtures</h2>
+      <div class="legend">
+        <span><span class="swatch" style="background:#24304d; border:1px solid #3a6bd6;"></span>Patched — click to edit or delete</span>
+        <span><span class="swatch" style="background:#1a1a1a; border:1px solid #222;"></span>Unpatched</span>
+      </div>
+      <div id="patchUniverseGrids"></div>
+    </div>
+  </div>
+
+  <!-- ============ GROUPS PAGE ============ -->
+  <div class="page" id="page-groups">
+    <div class="page-header">
+      <div>
+        <h2>Fixture Groups</h2>
+        <p class="msg">Fixture groups let one rule cover several fixtures at once (e.g. "House Whites", "Stage Front"). A group can be created empty — assign fixtures whenever you're ready.</p>
+      </div>
+      <button class="btn" id="groupAddBtn">+ Add Fixture Group</button>
+    </div>
+
+    <div class="panel">
+      <div id="groupsList"></div>
+    </div>
+  </div>
+
+  <!-- ============ RULES PAGE ============ -->
+  <div class="page" id="page-rules">
+    <div class="page-header">
+      <div>
+        <h2>Rules</h2>
+        <p class="msg">The shared pool of compliance thresholds. Rules marked "always active" are enforced constantly; the rest are enforced only while a cue that assigns them is active.</p>
+      </div>
+      <div style="display:flex; gap:8px; flex-shrink:0;">
+        <button class="btn secondary" id="ruleImportBtn">Import from live values</button>
+        <button class="btn" id="ruleAddBtn">+ Add Rule</button>
+      </div>
+    </div>
+
+    <div class="panel" style="padding:10px 16px;">
+      <div class="row" style="margin-bottom:0;">
+        <div class="field">
+          <label>Values shown as</label>
+          <select id="valueUnitSelect">
+            <option value="dmx">DMX (0-255)</option>
+            <option value="percent">Percent (0-100)</option>
+          </select>
+        </div>
+        <span class="msg" style="align-self:center;">Display only — applies everywhere in the app. Values are always stored and checked as raw DMX.</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div id="rulesList"></div>
+    </div>
+  </div>
+
+  <!-- ============ CUES PAGE ============ -->
+  <div class="page" id="page-cues">
+    <div class="page-header">
+      <div>
+        <h2>Cues</h2>
+        <p class="msg">A cue is a named set of rule assignments. Only one is active at a time — its rules are checked <em>in addition to</em> every rule marked "always active".</p>
+      </div>
+      <button class="btn" id="cueAddBtn">+ Add Cue</button>
+    </div>
+
+    <div class="panel">
+      <div id="cuesList"></div>
+    </div>
+  </div>
+
+  <!-- ============ BACKUP PAGE ============ -->
+  <div class="page" id="page-backup">
+    <div class="page-header">
+      <div>
+        <h2>Backup &amp; Restore</h2>
+        <p class="msg">Move your whole setup — patch, fixture groups, rules, cues, and any imported or custom fixture profiles — to another computer as one file.</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Export</h2>
+      <p class="msg">Downloads everything patched, grouped, and ruled here, plus any imported or custom fixture profiles, as one .zip file.</p>
+      <button class="btn" id="backupExportBtn">Export Backup</button>
+    </div>
+
+    <div class="panel">
+      <h2>Import</h2>
+      <p class="msg">Restore a backup exported from this or another computer.</p>
+      <button class="btn danger" id="backupImportBtn">Import Backup…</button>
+    </div>
+  </div>
+
+  <!-- ============ DETAIL MODAL ============ -->
+  <div class="modal-backdrop" id="detailModal">
+    <div class="modal">
+      <button class="modal-close" id="modalCloseBtn">✕</button>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <!-- ============ REUSABLE ADD / EDIT / DELETE MODAL ============ -->
+  <div class="modal-backdrop" id="formModal">
+    <div class="modal form-modal">
+      <button class="modal-close" id="formModalCloseBtn">✕</button>
+      <h3 id="formModalTitle"></h3>
+      <div class="modal-body" id="formModalBody"></div>
+      <div class="msg" id="formModalMsg"></div>
+      <div class="modal-footer" id="formModalFooter"></div>
+    </div>
+  </div>
+
+  <!-- ============ TOAST NOTIFICATIONS ============ -->
+  <div class="toast-stack" id="toastStack"></div>
+
+<script>
+// ── Page navigation ──────────────────────────────────────────────────────
+document.querySelectorAll(".nav-tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".nav-tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+    tab.classList.add("active");
+    document.getElementById(`page-${tab.dataset.page}`).classList.add("active");
+  });
+});
+
+function setMsg(el, text, ok) {
+  el.textContent = text;
+  el.className = "msg " + (ok ? "success" : "error");
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ── Toast notifications ───────────────────────────────────────────────────
+// Bottom-right, stacking, auto-dismiss after 5s or on click. This is the
+// one place action confirmations ("Created X", "Deleted Y") should go —
+// prefer this over a page-level .msg strip for anything transient.
+
+const TOAST_LIFETIME_MS = 5000;
+const toastStack = document.getElementById("toastStack");
+
+function showToast(text, { variant = "success" } = {}) {
+  const toast = document.createElement("div");
+  toast.className = "toast" + (variant === "error" ? " error" : "");
+  toast.innerHTML = `<span></span><button type="button" class="toast-close" aria-label="Dismiss">✕</button>`;
+  toast.querySelector("span").textContent = text;
+  toastStack.appendChild(toast);
+  // rAF so the initial (pre-.show) state actually paints before transitioning in
+  requestAnimationFrame(() => requestAnimationFrame(() => toast.classList.add("show")));
+
+  let dismissed = false;
+  function dismiss() {
+    if (dismissed) return;
+    dismissed = true;
+    clearTimeout(timer);
+    toast.classList.remove("show");
+    toast.classList.add("leaving");
+    toast.addEventListener("transitionend", () => toast.remove(), { once: true });
+    setTimeout(() => toast.remove(), 400); // fallback if transitionend never fires (e.g. backgrounded tab)
+  }
+  const timer = setTimeout(dismiss, TOAST_LIFETIME_MS);
+  toast.addEventListener("click", dismiss);
+  return dismiss;
+}
+
+// ── Reusable add/edit/delete modal ───────────────────────────────────────
+// openFormModal({ title, bodyHtml, buttons:[{label, variant, onClick}] }).
+// onClick receives the modal body element; the modal stays open until the
+// handler calls closeFormModal(), so a failed save can report and stay put.
+
+const formModalEl = document.getElementById("formModal");
+const formModalBody = document.getElementById("formModalBody");
+const formModalMsg = document.getElementById("formModalMsg");
+const formModalFooter = document.getElementById("formModalFooter");
+
+function openFormModal({ title, bodyHtml, buttons = [], onReady, wide = false }) {
+  formModalEl.querySelector(".form-modal").classList.toggle("wide", wide);
+  document.getElementById("formModalTitle").textContent = title;
+  formModalBody.innerHTML = bodyHtml;
+  formModalMsg.textContent = "";
+  formModalMsg.className = "msg";
+  formModalFooter.innerHTML = "";
+
+  for (const b of buttons) {
+    const btn = document.createElement("button");
+    btn.className = "btn" + (b.variant ? ` ${b.variant}` : "");
+    btn.textContent = b.label;
+    btn.addEventListener("click", () => b.onClick(formModalBody, btn));
+    formModalFooter.appendChild(btn);
+  }
+
+  formModalEl.classList.add("open");
+  if (onReady) onReady(formModalBody);
+  const first = formModalBody.querySelector("input:not([disabled]), select, textarea");
+  if (first) first.focus();
+}
+
+function closeFormModal() {
+  formModalEl.classList.remove("open");
+  formModalBody.innerHTML = "";
+  formModalFooter.innerHTML = "";
+}
+
+document.getElementById("formModalCloseBtn").addEventListener("click", closeFormModal);
+formModalEl.addEventListener("click", (e) => {
+  if (e.target === formModalEl) closeFormModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (formModalEl.classList.contains("open")) closeFormModal();
+  else document.getElementById("detailModal").classList.remove("open");
+});
+
+// ── Interface selector ───────────────────────────────────────────────────
+const ifaceSelect = document.getElementById("ifaceSelect");
+const ifaceApply = document.getElementById("ifaceApply");
+const ifaceMsg = document.getElementById("ifaceMsg");
+
+async function loadInterfaces() {
+  try {
+    const res = await fetch("/api/interfaces");
+    const data = await res.json();
+    ifaceSelect.innerHTML = "";
+    for (const iface of data.interfaces) {
+      const opt = document.createElement("option");
+      opt.value = iface.ip;
+      opt.textContent = `${iface.name} — ${iface.ip}`;
+      if (iface.ip === data.current) opt.selected = true;
+      ifaceSelect.appendChild(opt);
+    }
+    if (!data.interfaces.some(i => i.ip === data.current)) {
+      const opt = document.createElement("option");
+      opt.value = data.current;
+      opt.textContent = `(current, not detected) — ${data.current}`;
+      opt.selected = true;
+      ifaceSelect.appendChild(opt);
+    }
+  } catch (e) {
+    ifaceMsg.textContent = "Couldn't load network interfaces.";
+  }
+}
+
+ifaceApply.addEventListener("click", async () => {
+  const ip = ifaceSelect.value;
+  ifaceApply.disabled = true;
+  ifaceMsg.textContent = "Restarting Art-Net node…";
+  try {
+    await fetch("/api/interface", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ip }),
+    });
+    ifaceMsg.textContent = `Now advertising ${ip} to Vista.`;
+  } catch (e) {
+    ifaceMsg.textContent = "Failed to apply — check the console log.";
+  } finally {
+    ifaceApply.disabled = false;
+  }
+});
+loadInterfaces();
+
+// ── Fixture Patch panel ──────────────────────────────────────────────────
+
+let libraryProfiles = [];
+const profileSelect = document.getElementById("profileSelect");
+const modeSelect = document.getElementById("modeSelect");
+const patchMsg = document.getElementById("patchMsg");
+
+document.querySelectorAll(".tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".tabpage").forEach(p => p.classList.remove("active"));
+    tab.classList.add("active");
+    document.getElementById(`tab-${tab.dataset.tab}`).classList.add("active");
+  });
+});
+
+async function loadFixtureLibrary() {
+  try {
+    const res = await fetch("/api/fixture-library");
+    const data = await res.json();
+    libraryProfiles = data.profiles;
+    profileSelect.innerHTML = "";
+    for (const p of libraryProfiles) {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = `${p.manufacturer} — ${p.model} (${p.source})`;
+      profileSelect.appendChild(opt);
+    }
+    updateModeOptions();
+    populateCustomProfileSelect();
+  } catch (e) {
+    setMsg(patchMsg, "Couldn't load fixture library.", false);
+  }
+}
+
+function updateModeOptions() {
+  const profile = libraryProfiles.find(p => p.id === profileSelect.value);
+  modeSelect.innerHTML = "";
+  if (!profile) return;
+  for (const modeName of Object.keys(profile.modes)) {
+    const opt = document.createElement("option");
+    opt.value = modeName;
+    opt.textContent = `${modeName} (${profile.modes[modeName].length}ch)`;
+    modeSelect.appendChild(opt);
+  }
+}
+profileSelect.addEventListener("change", updateModeOptions);
+
+document.getElementById("patchAddBtn").addEventListener("click", async () => {
+  const body = {
+    name: document.getElementById("patchName").value.trim(),
+    universe: Number(document.getElementById("patchUniverse").value),
+    start_channel: Number(document.getElementById("patchStartChannel").value),
+    profile: profileSelect.value,
+    mode: modeSelect.value,
+    quantity: Math.max(1, Number(document.getElementById("patchQuantity").value) || 1),
+  };
+  if (!body.name) { setMsg(patchMsg, "Give the fixture a name.", false); return; }
+  try {
+    const res = await fetch("/api/patch/fixtures", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) { setMsg(patchMsg, data.error || "Failed to add fixture.", false); return; }
+    const label = data.added.length > 1
+      ? `Added ${data.added.length} fixtures: ${data.added[0]} … ${data.added[data.added.length - 1]}.`
+      : `Added "${data.added[0]}" to the patch.`;
+    setMsg(patchMsg, label, true);
+    document.getElementById("patchName").value = "";
+    document.getElementById("patchQuantity").value = "1";
+    loadPatchGrids();
+  } catch (e) {
+    setMsg(patchMsg, "Request failed — check the console log.", false);
+  }
+});
+
+// ── OFL search → select → background import → hand off to "From library" ──
+
+const oflSearchBox = document.getElementById("oflSearchBox");
+const oflResults = document.getElementById("oflResults");
+const oflMsg = document.getElementById("oflMsg");
+let oflSearchTimer = null;
+
+oflSearchBox.addEventListener("input", () => {
+  clearTimeout(oflSearchTimer);
+  const q = oflSearchBox.value.trim();
+  if (q.length < 2) { oflResults.innerHTML = ""; return; }
+  oflSearchTimer = setTimeout(() => runOflSearch(q), 300);
+});
+
+async function runOflSearch(q) {
+  oflMsg.textContent = "Searching…";
+  try {
+    const res = await fetch(`/api/fixture-library/search-ofl?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+    if (!res.ok) { setMsg(oflMsg, data.error || "Search failed.", false); return; }
+    oflMsg.textContent = data.results.length ? "" : "No matches.";
+    oflResults.innerHTML = "";
+    for (const r of data.results) {
+      const row = document.createElement("div");
+      row.className = "ofl-result";
+      row.innerHTML = `
+        <span class="name">${r.display_name} <span class="mfr">— ${r.manufacturer_name}</span></span>
+        <button class="btn secondary" style="height:26px; padding:3px 10px;">Select</button>
+      `;
+      row.querySelector("button").addEventListener("click", () => selectOflResult(r));
+      oflResults.appendChild(row);
+    }
+  } catch (e) {
+    setMsg(oflMsg, "Search failed — check the console log.", false);
+  }
+}
+
+async function selectOflResult(r) {
+  setMsg(oflMsg, `Importing ${r.display_name}…`, true);
+  try {
+    const res = await fetch("/api/fixture-library/import-ofl", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ manufacturer_key: r.manufacturer_key, fixture_key: r.fixture_key }),
+    });
+    const data = await res.json();
+    if (!res.ok) { setMsg(oflMsg, data.error || "Import failed.", false); return; }
+
+    await loadFixtureLibrary();
+    profileSelect.value = data.id;
+    updateModeOptions();
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".tabpage").forEach(p => p.classList.remove("active"));
+    document.querySelector('.tab[data-tab="library"]').classList.add("active");
+    document.getElementById("tab-library").classList.add("active");
+    document.getElementById("patchName").focus();
+    setMsg(patchMsg, `Imported "${data.manufacturer} — ${data.model}". Set a name, address, and quantity, then Add to patch.`, true);
+  } catch (e) {
+    setMsg(oflMsg, "Request failed — check the console log.", false);
+  }
+}
+
+function addCustomChannelRow(role = "") {
+  const container = document.getElementById("customChannels");
+  const row = document.createElement("div");
+  row.className = "channel-row";
+  const idx = container.children.length + 1;
+  row.innerHTML = `
+    <span class="msg" style="min-width:60px;">Ch ${idx}:</span>
+    <input class="channel-role" placeholder="role (e.g. intensity, red)" value="${role}" style="min-width:200px;">
+    <button class="btn secondary" style="height:28px; padding:2px 8px;" onclick="this.parentElement.remove(); renumberCustomChannels();">✕</button>
+  `;
+  container.appendChild(row);
+}
+function renumberCustomChannels() {
+  document.querySelectorAll("#customChannels .channel-row span").forEach((el, i) => {
+    el.textContent = `Ch ${i + 1}:`;
+  });
+}
+document.getElementById("customAddChannelBtn").addEventListener("click", () => addCustomChannelRow());
+
+function resetCustomForm() {
+  document.getElementById("customManufacturer").value = "";
+  document.getElementById("customModel").value = "";
+  document.getElementById("customModeName").value = "default";
+  document.getElementById("customModeSelect").innerHTML = '<option value="">(new mode)</option>';
+  document.getElementById("customChannels").innerHTML = "";
+  addCustomChannelRow("intensity");
+  addCustomChannelRow("red");
+  addCustomChannelRow("green");
+  addCustomChannelRow("blue");
+  document.getElementById("customDeleteBtn").style.display = "none";
+}
+resetCustomForm();
+
+// ── Editing an existing custom profile ──────────────────────────────────
+
+let editingProfileId = null;
+let editingProfileData = null;
+
+function populateCustomProfileSelect() {
+  const select = document.getElementById("customProfileSelect");
+  const previous = select.value;
+  select.innerHTML = '<option value="">— New profile —</option>';
+  for (const p of libraryProfiles) {
+    if (p.source !== "custom") continue;
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = `${p.manufacturer} — ${p.model}`;
+    select.appendChild(opt);
+  }
+  // keep the current selection if it's still valid (e.g. after saving an edit)
+  if ([...select.options].some(o => o.value === previous)) select.value = previous;
+}
+
+function loadModeIntoCustomForm(modeName, roles) {
+  document.getElementById("customModeName").value = modeName;
+  const container = document.getElementById("customChannels");
+  container.innerHTML = "";
+  for (const role of roles) addCustomChannelRow(role);
+}
+
+document.getElementById("customProfileSelect").addEventListener("change", (e) => {
+  const id = e.target.value;
+  if (!id) {
+    editingProfileId = null;
+    editingProfileData = null;
+    resetCustomForm();
+    setMsg(document.getElementById("customMsg"), "", true);
+    return;
+  }
+  const profile = libraryProfiles.find(p => p.id === id);
+  if (!profile) return;
+
+  editingProfileId = id;
+  editingProfileData = profile;
+  document.getElementById("customManufacturer").value = profile.manufacturer;
+  document.getElementById("customModel").value = profile.model;
+
+  const modeSelect = document.getElementById("customModeSelect");
+  modeSelect.innerHTML = '<option value="">(new mode)</option>';
+  for (const modeName of Object.keys(profile.modes)) {
+    const opt = document.createElement("option");
+    opt.value = modeName;
+    opt.textContent = modeName;
+    modeSelect.appendChild(opt);
+  }
+  const firstMode = Object.keys(profile.modes)[0];
+  if (firstMode) {
+    modeSelect.value = firstMode;
+    loadModeIntoCustomForm(firstMode, profile.modes[firstMode]);
+  }
+  document.getElementById("customDeleteBtn").style.display = "inline-block";
+});
+
+document.getElementById("customModeSelect").addEventListener("change", (e) => {
+  if (!editingProfileData) return;
+  const modeName = e.target.value;
+  if (!modeName) {
+    document.getElementById("customModeName").value = "";
+    document.getElementById("customChannels").innerHTML = "";
+    addCustomChannelRow("");
+    return;
+  }
+  loadModeIntoCustomForm(modeName, editingProfileData.modes[modeName]);
+});
+
+document.getElementById("customSaveBtn").addEventListener("click", async () => {
+  const customMsg = document.getElementById("customMsg");
+  const manufacturer = document.getElementById("customManufacturer").value.trim();
+  const model = document.getElementById("customModel").value.trim();
+  const modeName = document.getElementById("customModeName").value.trim() || "default";
+  const roles = [...document.querySelectorAll("#customChannels .channel-role")]
+    .map(i => i.value.trim() || "reserved");
+
+  if (!manufacturer || !model) { setMsg(customMsg, "Manufacturer and model are required.", false); return; }
+  if (roles.length === 0) { setMsg(customMsg, "Add at least one channel.", false); return; }
+
+  const body = { manufacturer, model, modes: { [modeName]: roles } };
+  if (editingProfileId) body.profile_id = editingProfileId;
+
+  try {
+    const res = await fetch("/api/fixture-library/custom", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) { setMsg(customMsg, data.error || "Failed to save profile.", false); return; }
+    setMsg(customMsg,
+      editingProfileId
+        ? `Updated "${manufacturer} — ${model}" (mode "${modeName}").`
+        : `Saved "${manufacturer} — ${model}". Switch to "From library" to patch it.`,
+      true);
+    editingProfileId = data.id;
+    await loadFixtureLibrary();
+    document.getElementById("customProfileSelect").value = data.id;
+    editingProfileData = libraryProfiles.find(p => p.id === data.id);
+    document.getElementById("customDeleteBtn").style.display = "inline-block";
+  } catch (e) {
+    setMsg(customMsg, "Request failed — check the console log.", false);
+  }
+});
+
+document.getElementById("customDeleteBtn").addEventListener("click", async () => {
+  const customMsg = document.getElementById("customMsg");
+  if (!editingProfileId) return;
+  try {
+    const res = await fetch(`/api/fixture-library/${encodeURIComponent(editingProfileId)}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) { setMsg(customMsg, data.error || "Failed to delete profile.", false); return; }
+    setMsg(customMsg, "Profile deleted.", true);
+    editingProfileId = null;
+    editingProfileData = null;
+    resetCustomForm();
+    document.getElementById("customProfileSelect").value = "";
+    await loadFixtureLibrary();
+  } catch (e) {
+    setMsg(customMsg, "Request failed — check the console log.", false);
+  }
+});
+
+// ── Shared universe-grid cell creation + fixture grouping ────────────────
+// Used by both the Patch grid (below) and the Monitor grid (further down):
+// every cell gets a small channel-number label, and cells belonging to the
+// same fixture are (a) labeled with that fixture's name at the lowest
+// channel it owns and (b) wired so hovering any one of them highlights all
+// of them. Title text, patched/compliance coloring, and click handlers are
+// page-specific and stay in each page's own render function.
+
+function buildUniverseGridCells(grid) {
+  const cells = [];
+  for (let ch = 1; ch <= 512; ch++) {
+    const cell = document.createElement("div");
+    cell.className = "chan-cell";
+    cell.innerHTML = `<span class="chan-num">${ch}</span>`;
+    grid.appendChild(cell);
+    cells.push(cell);
+  }
+  return cells;
+}
+
+function applyFixtureGrouping(cells, owners) {
+  // Group this universe's owned cells by fixture up front: hovering any one
+  // of a fixture's cells highlights all of them, and the lowest channel
+  // number (first pushed, since the loop below runs in ascending channel
+  // order) is where its name label anchors.
+  const cellsByFixture = new Map();
+  for (let i = 0; i < 512; i++) {
+    const owner = owners[String(i + 1)];
+    if (!owner) continue;
+    if (!cellsByFixture.has(owner.fixture)) cellsByFixture.set(owner.fixture, []);
+    cellsByFixture.get(owner.fixture).push(cells[i]);
+  }
+
+  for (let i = 0; i < 512; i++) {
+    const owner = owners[String(i + 1)];
+    const cell = cells[i];
+    cell.classList.remove("label-anchor");
+    cell.querySelector(".fixture-label")?.remove();
+
+    const group = owner ? cellsByFixture.get(owner.fixture) : null;
+    cell.onmouseenter = group ? () => group.forEach(c => c.classList.add("hl")) : null;
+    cell.onmouseleave = group ? () => group.forEach(c => c.classList.remove("hl")) : null;
+  }
+
+  for (const [name, fixtureCells] of cellsByFixture) {
+    const first = fixtureCells[0];
+    first.classList.add("label-anchor");
+    const label = document.createElement("span");
+    label.className = "fixture-label";
+    label.textContent = name;
+    first.appendChild(label);
+  }
+}
+
+// ── Patch page: universe grid instead of a flat list ─────────────────────
+// Shows which channels are patched to which fixture, per universe (reusing
+// the Monitor page's grid CSS, with a filled "patched" cell instead of
+// border-only since there's no live value/compliance to show here).
+// Clicking any cell belonging to a fixture opens a menu to edit or delete
+// it -- that menu is the only way to unpatch or re-address a fixture now.
+
+let patchSnapshot = null;
+const patchUniverseGridBuilt = new Set();
+const patchCellRefs = {};
+
+function buildPatchUniverseGrid(universe) {
+  const container = document.getElementById("patchUniverseGrids");
+  const section = document.createElement("div");
+  section.className = "panel universe-panel";
+  section.innerHTML = `
+    <h2>Universe ${universe}</h2>
+    <div class="chan-grid" id="patch-uni-grid-${universe}"></div>
+  `;
+  container.appendChild(section);
+
+  patchCellRefs[universe] = buildUniverseGridCells(document.getElementById(`patch-uni-grid-${universe}`));
+}
+
+function renderPatchGrids(snapshot) {
+  patchSnapshot = snapshot;
+  for (const [uniStr, info] of Object.entries(snapshot.universes)) {
+    const universe = Number(uniStr);
+    if (!patchUniverseGridBuilt.has(universe)) {
+      buildPatchUniverseGrid(universe);
+      patchUniverseGridBuilt.add(universe);
+    }
+    const cells = patchCellRefs[universe];
+    applyFixtureGrouping(cells, info.owners);
+
+    for (let i = 0; i < 512; i++) {
+      const ch = i + 1;
+      const owner = info.owners[String(ch)];
+      const cell = cells[i];
+      cell.classList.toggle("patched", !!owner);
+      cell.title = owner ? `Ch ${ch}: ${owner.fixture} (${owner.role})` : `Ch ${ch}: unpatched`;
+      cell.style.cursor = owner ? "pointer" : "default";
+      cell.onclick = owner ? () => openFixtureMenuModal(owner.fixture) : null;
+    }
+  }
+}
+
+async function loadPatchGrids() {
+  try {
+    const res = await fetch("/api/snapshot");
+    renderPatchGrids(await res.json());
+  } catch (e) { /* ignore -- the next add/edit/delete triggers a fresh load */ }
+}
+
+function fixtureFromPatchSnapshot(name) {
+  return patchSnapshot ? patchSnapshot.fixtures.find(f => f.name === name) : null;
+}
+
+function openFixtureMenuModal(name) {
+  const fx = fixtureFromPatchSnapshot(name);
+  if (!fx) return;
+  const addressText = fx.profile
+    ? `${profileDisplayName(fx.profile)} (${fx.mode})`
+    : "custom channel map";
+  openFormModal({
+    title: fx.name,
+    bodyHtml: `
+      <p class="msg">Universe ${fx.universe}, start channel ${fx.start_channel} — ${escapeHtml(addressText)}</p>
+      <div>${Object.keys(fx.values).map(role => `<span class="chip">${escapeHtml(role)}</span>`).join("")}</div>
+    `,
+    buttons: [
+      { label: "Close", variant: "secondary", onClick: closeFormModal },
+      { label: "Delete", variant: "danger", onClick: () => openDeleteFixtureModal(fx) },
+      { label: "Edit", onClick: () => openEditFixtureModal(fx) },
+    ],
+  });
+}
+
+// Fixture-scoped profile/mode selects for the edit dialog -- deliberately
+// separate from the page-level profileSelect/modeSelect + updateModeOptions
+// used by the "From library" add form, which are bound to those specific
+// elements rather than parameterized.
+function populateEditFixtureProfileSelect(selectEl, selectedId) {
+  selectEl.innerHTML = "";
+  for (const p of libraryProfiles) {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = `${p.manufacturer} — ${p.model} (${p.source})`;
+    selectEl.appendChild(opt);
+  }
+  selectEl.value = selectedId;
+}
+
+function populateEditFixtureModeSelect(modeSel, profileId, selectedMode) {
+  const profile = libraryProfiles.find(p => p.id === profileId);
+  modeSel.innerHTML = "";
+  if (!profile) return;
+  for (const modeName of Object.keys(profile.modes)) {
+    const opt = document.createElement("option");
+    opt.value = modeName;
+    opt.textContent = `${modeName} (${profile.modes[modeName].length}ch)`;
+    modeSel.appendChild(opt);
+  }
+  if ([...modeSel.options].some(o => o.value === selectedMode)) modeSel.value = selectedMode;
+}
+
+function openEditFixtureModal(fx) {
+  if (!fx.profile) {
+    openFormModal({
+      title: `Edit "${fx.name}"`,
+      bodyHtml: '<p class="msg">This fixture uses a custom channel map, which can\'t be edited from here yet — delete and re-add it to change its addressing or channels.</p>',
+      buttons: [{ label: "Close", variant: "secondary", onClick: closeFormModal }],
+    });
+    return;
+  }
+
+  openFormModal({
+    title: `Edit "${fx.name}"`,
+    bodyHtml: `
+      <div class="row">
+        <div class="field" style="flex:1; max-width:220px;">
+          <label>Name</label>
+          <input value="${escapeHtml(fx.name)}" disabled style="width:100%;">
+        </div>
+        <div class="field"><label>Universe</label><input id="editFxUniverse" type="number" min="1" value="${fx.universe}" style="width:90px; min-width:90px;"></div>
+        <div class="field"><label>Start channel</label><input id="editFxStart" type="number" min="1" max="512" value="${fx.start_channel}" style="width:100px; min-width:100px;"></div>
+      </div>
+      <p class="msg">A fixture's name can't be changed here — delete and re-add it to rename.</p>
+      <div class="row">
+        <div class="field" style="flex:1; max-width:320px;">
+          <label>Profile</label>
+          <select id="editFxProfile" style="width:100%;"></select>
+        </div>
+        <div class="field" style="flex:1; max-width:220px;">
+          <label>Mode</label>
+          <select id="editFxMode" style="width:100%;"></select>
+        </div>
+      </div>
+    `,
+    onReady: (bodyEl) => {
+      const profileSel = bodyEl.querySelector("#editFxProfile");
+      const modeSel = bodyEl.querySelector("#editFxMode");
+      populateEditFixtureProfileSelect(profileSel, fx.profile);
+      populateEditFixtureModeSelect(modeSel, fx.profile, fx.mode);
+      profileSel.addEventListener("change", () => populateEditFixtureModeSelect(modeSel, profileSel.value, ""));
+    },
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Save changes",
+        onClick: async (bodyEl, btn) => {
+          const body = {
+            universe: Number(bodyEl.querySelector("#editFxUniverse").value),
+            start_channel: Number(bodyEl.querySelector("#editFxStart").value),
+            profile: bodyEl.querySelector("#editFxProfile").value,
+            mode: bodyEl.querySelector("#editFxMode").value,
+          };
+          if (!body.profile || !body.mode) { setMsg(formModalMsg, "Pick a profile and mode.", false); return; }
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/api/patch/fixtures/${encodeURIComponent(fx.name)}`, {
+              method: "PUT", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (!res.ok) { setMsg(formModalMsg, data.error || "Failed to update fixture.", false); return; }
+            closeFormModal();
+            showToast(`Updated "${fx.name}".`);
+            await loadPatchGrids();
+          } catch (e) {
+            setMsg(formModalMsg, "Request failed — check the console log.", false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+async function openDeleteFixtureModal(fx) {
+  await loadRuleTargets();
+  const memberOf = ruleTargetsData.groups.filter(g => g.members.includes(fx.name)).map(g => g.name);
+  openFormModal({
+    title: `Delete fixture "${fx.name}"?`,
+    bodyHtml: `
+      <p style="margin:0; font-size:13px; color:#ccc;">Universe ${fx.universe}, start channel ${fx.start_channel}.</p>
+      ${memberOf.length
+        ? `<p class="msg">Still listed in ${memberOf.length} group(s): ${escapeHtml(memberOf.join(", "))} — remove it there separately if needed.</p>`
+        : ""}
+    `,
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Delete fixture",
+        variant: "danger",
+        onClick: async (bodyEl, btn) => {
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/api/patch/fixtures/${encodeURIComponent(fx.name)}`, { method: "DELETE" });
+            if (!res.ok) { setMsg(formModalMsg, "Failed to delete fixture.", false); return; }
+            closeFormModal();
+            showToast(`Deleted "${fx.name}".`);
+            await loadPatchGrids();
+          } catch (e) {
+            setMsg(formModalMsg, "Request failed — check the console log.", false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+loadFixtureLibrary();
+loadPatchGrids();
+
+// ── Groups page ──────────────────────────────────────────────────────────
+// The page is a read-only table; every add/edit/delete happens in a modal.
+
+
+async function fetchPatchedFixtureNames() {
+  try {
+    const res = await fetch("/api/rule-targets");
+    const data = await res.json();
+    return data.fixtures.map(f => f.name);
+  } catch (e) {
+    return null; // null means "couldn't load", distinct from "none patched"
+  }
+}
+
+function groupFixtureChecklistHtml(fixtureNames, preselected = []) {
+  if (fixtureNames === null) {
+    return '<div class="msg error">Couldn\'t load the fixture list — check the console log.</div>';
+  }
+  if (!fixtureNames.length) {
+    return '<div class="msg">No fixtures patched yet — you can still create the fixture group now and assign fixtures once some are patched.</div>';
+  }
+  return `
+    <div class="checklist-tools">
+      <input type="search" class="checklist-search" placeholder="Filter fixtures…" autocomplete="off">
+      <span class="checklist-count"></span>
+    </div>
+    <div class="checklist" data-filter-list="fixture">` + fixtureNames.map(name => `
+      <label title="${escapeHtml(name)}" data-search="${escapeHtml(name.toLowerCase())}">
+        <input type="checkbox" class="group-fixture-check" value="${escapeHtml(name)}"
+          ${preselected.includes(name) ? "checked" : ""}><span>${escapeHtml(name)}</span>
+      </label>
+    `).join("") + `</div>`;
+}
+
+function checkedGroupFixtures(bodyEl) {
+  // Deliberately not limited to visible rows — filtering the list narrows what
+  // you're looking at, it doesn't deselect what you already picked.
+  return [...bodyEl.querySelectorAll(".group-fixture-check:checked")].map(c => c.value);
+}
+
+// Case-insensitive substring filter over a checklist. Rows are hidden rather
+// than re-rendered, so checked state (and any per-row target select) survives
+// every keystroke.
+//
+// Markup contract, shared by the fixture and rule checklists:
+//   container   [data-filter-list="<noun>"]
+//   rows        [data-search="<lowercased haystack>"], optional [data-group]
+//   headers     [data-group-header="<same value as the rows' data-group>"]
+// A header hides itself once every row under it is filtered out.
+function wireChecklistFilter(bodyEl) {
+  const list = bodyEl.querySelector("[data-filter-list]");
+  if (!list) return; // nothing to filter — a placeholder message is showing
+  const search = bodyEl.querySelector(".checklist-search");
+  const count = bodyEl.querySelector(".checklist-count");
+  const noun = list.dataset.filterList || "item";
+  // :scope > rather than a deep querySelectorAll: a row can itself contain a
+  // nested filterable list (the Cues dialog nests a target-picker checklist
+  // inside each rule row) — without the scope guard, this pass would also
+  // sweep up and mis-filter that inner list's own [data-search] rows.
+  const rows = [...list.querySelectorAll(":scope > [data-search]")];
+  const headers = [...list.querySelectorAll(":scope > [data-group-header]")];
+
+  function refresh() {
+    const q = search.value.trim().toLowerCase();
+    const visibleGroups = new Set();
+    let shown = 0;
+    for (const row of rows) {
+      const match = !q || row.dataset.search.includes(q);
+      row.hidden = !match;
+      if (match) {
+        shown++;
+        if (row.dataset.group) visibleGroups.add(row.dataset.group);
+      }
+    }
+    for (const header of headers) {
+      header.hidden = !visibleGroups.has(header.dataset.groupHeader);
+    }
+    const selected = rows.filter(r => r.querySelector("input[type=checkbox]")?.checked).length;
+    const shownText = shown === rows.length
+      ? `${rows.length} ${noun}${rows.length === 1 ? "" : "s"}`
+      : `${shown} of ${rows.length} shown`;
+    count.textContent = selected ? `${shownText} · ${selected} selected` : shownText;
+  }
+
+  search.addEventListener("input", refresh);
+  list.addEventListener("change", refresh); // keep the selected tally live
+  refresh();
+}
+
+// ── "Applies to" target picker ────────────────────────────────────────────
+// A searchable, multi-select checklist for an applies_to value — the string
+// "*", or a list mixing fixture names and "group:<name>" tokens. Shared by
+// the Cues dialog's per-rule target and the Rules dialog's "Applies to"
+// field for an always-active rule. Groups are always listed before fixtures
+// so the common case (targeting a whole group) doesn't require scrolling
+// past every patched fixture first.
+
+function targetTokensToSet(current) {
+  if (current == null || current === "*") return new Set();
+  return new Set(Array.isArray(current) ? current : [current]);
+}
+
+function targetPickerRowHtml(value, label, groupKey, checked) {
+  return `
+    <label class="checklist-row-inline" data-group="${escapeHtml(groupKey)}"
+           data-search="${escapeHtml(label.toLowerCase())}">
+      <input type="checkbox" class="target-check" value="${escapeHtml(value)}" ${checked ? "checked" : ""}>
+      <span>${escapeHtml(label)}</span>
+    </label>
+  `;
+}
+
+// fixtures/groups: [{name}, ...], pre-filtered by the caller if needed (the
+// Cues target narrows fixtures to the rule's profile; groups are never
+// filtered since a group can span profiles). current: "*", an array of
+// tokens, or null/undefined (treated the same as "*").
+function targetPickerHtml(fixtures, groups, current) {
+  const selected = targetTokensToSet(current);
+  const isWildcard = current == null || current === "*";
+  const hasAny = fixtures.length || groups.length;
+  return `
+    <div class="target-picker">
+      <label class="inline-check">
+        <input type="checkbox" class="target-wildcard" ${isWildcard ? "checked" : ""}> All fixtures (*)
+      </label>
+      <div class="target-picker-list" ${isWildcard ? "hidden" : ""}>
+        ${!hasAny ? '<div class="msg">Nothing patched yet.</div>' : `
+          <div class="checklist-tools">
+            <input type="search" class="checklist-search" placeholder="Filter…" autocomplete="off">
+            <span class="checklist-count"></span>
+          </div>
+          <div class="scroll-list target-scroll" data-filter-list="target">
+            ${groups.length ? `<div class="group-header" data-group-header="Fixture Groups">Fixture Groups</div>`
+              + groups.map(g => targetPickerRowHtml(`group:${g.name}`, g.name, "Fixture Groups", selected.has(`group:${g.name}`))).join("") : ""}
+            ${fixtures.length ? `<div class="group-header" data-group-header="Fixtures">Fixtures</div>`
+              + fixtures.map(f => targetPickerRowHtml(f.name, f.name, "Fixtures", selected.has(f.name))).join("") : ""}
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+// container: the element returned by/wrapping targetPickerHtml (its own
+// .target-picker, or an ancestor containing exactly one).
+function wireTargetPicker(container) {
+  const wildcardCheck = container.querySelector(".target-wildcard");
+  const listWrap = container.querySelector(".target-picker-list");
+  wildcardCheck.addEventListener("change", () => {
+    listWrap.hidden = wildcardCheck.checked;
+  });
+  wireChecklistFilter(container); // no-op when nothing was patched to list
+}
+
+function collectTargetPicker(container) {
+  if (container.querySelector(".target-wildcard").checked) return "*";
+  const values = [...container.querySelectorAll(".target-check:checked")].map(c => c.value);
+  return values.length ? values : "*"; // nothing picked behaves like "*"
+}
+
+async function openAddGroupModal() {
+  const fixtureNames = await fetchPatchedFixtureNames();
+  openFormModal({
+    title: "Add fixture group",
+    wide: true,
+    bodyHtml: `
+      <div class="row">
+        <div class="field" style="flex:1; max-width:360px;">
+          <label>Name</label>
+          <input id="modalGroupName" placeholder="House Whites" style="width:100%;">
+        </div>
+      </div>
+      <div class="field" style="margin-top:6px;">
+        <label>Fixtures</label>
+        ${groupFixtureChecklistHtml(fixtureNames)}
+      </div>
+    `,
+    onReady: wireChecklistFilter,
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Create group",
+        onClick: async (bodyEl, btn) => {
+          const name = bodyEl.querySelector("#modalGroupName").value.trim();
+          if (!name) { setMsg(formModalMsg, "Name is required.", false); return; }
+          // Fixtures are optional — a group can be created empty and assigned to later.
+          const fixtures = checkedGroupFixtures(bodyEl);
+          btn.disabled = true;
+          try {
+            const res = await fetch("/api/groups", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name, fixtures }),
+            });
+            const data = await res.json();
+            if (!res.ok) { setMsg(formModalMsg, data.error || "Failed to save group.", false); return; }
+            closeFormModal();
+            loadGroups();
+          } catch (e) {
+            setMsg(formModalMsg, "Request failed — check the console log.", false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+async function openEditGroupModal(group) {
+  const fixtureNames = await fetchPatchedFixtureNames();
+  openFormModal({
+    title: `Edit fixture group "${group.name}"`,
+    wide: true,
+    bodyHtml: `
+      <div class="row">
+        <div class="field" style="flex:1; max-width:360px;">
+          <label>Name</label>
+          <input id="modalGroupName" value="${escapeHtml(group.name)}" style="width:100%;">
+        </div>
+      </div>
+      <p class="msg">Renaming updates every rule and cue that targets this group, so nothing stops matching.</p>
+      <div class="field" style="margin-top:6px;">
+        <label>Fixtures</label>
+        ${groupFixtureChecklistHtml(fixtureNames, group.fixtures)}
+      </div>
+    `,
+    onReady: wireChecklistFilter,
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Save changes",
+        onClick: async (bodyEl, btn) => {
+          const name = bodyEl.querySelector("#modalGroupName").value.trim();
+          if (!name) { setMsg(formModalMsg, "Name is required.", false); return; }
+          const fixtures = checkedGroupFixtures(bodyEl);
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/api/groups/${encodeURIComponent(group.name)}`, {
+              method: "PUT", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name, fixtures }),
+            });
+            const data = await res.json();
+            if (!res.ok) { setMsg(formModalMsg, data.error || "Failed to update group.", false); return; }
+            closeFormModal();
+            if (data.renamed) {
+              const { rules = 0, cue_assignments: cues = 0 } = data.retargeted || {};
+              showToast(rules || cues
+                ? `Renamed to "${name}" — repointed ${rules} rule(s) and ${cues} cue assignment(s).`
+                : `Renamed to "${name}".`);
+              // Rules/cues now reference the new name; drop the cached copies
+              // so those pages don't render the stale target on next open.
+              loadRulesList();
+              loadRuleTargets();
+            }
+            loadGroups();
+          } catch (e) {
+            setMsg(formModalMsg, "Request failed — check the console log.", false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+function openDeleteGroupModal(group) {
+  openFormModal({
+    title: `Delete fixture group "${group.name}"?`,
+    bodyHtml: `
+      <p style="margin:0; font-size:13px; color:#ccc;">
+        This removes the group only — the ${group.fixtures.length} fixture(s) in it stay patched.
+      </p>
+      <p class="msg">Any rule targeting <b>group:${escapeHtml(group.name)}</b> will stop matching anything.</p>
+    `,
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Delete group",
+        variant: "danger",
+        onClick: async (bodyEl, btn) => {
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/api/groups/${encodeURIComponent(group.name)}`, { method: "DELETE" });
+            if (!res.ok) { setMsg(formModalMsg, "Failed to delete group.", false); return; }
+            closeFormModal();
+            loadGroups();
+          } catch (e) {
+            setMsg(formModalMsg, "Request failed — check the console log.", false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+document.getElementById("groupAddBtn").addEventListener("click", openAddGroupModal);
+
+async function loadGroups() {
+  const container = document.getElementById("groupsList");
+  try {
+    const res = await fetch("/api/groups");
+    const data = await res.json();
+    if (!data.groups.length) {
+      container.innerHTML = '<div class="empty">No fixture groups yet — use "Add Fixture Group" to create one.</div>';
+      return;
+    }
+    container.innerHTML = `
+      <table class="data-table">
+        <thead>
+          <tr><th style="width:220px;">Name</th><th>Fixtures</th><th class="col-actions">Actions</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    `;
+    const tbody = container.querySelector("tbody");
+    for (const g of data.groups) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="row-name">${escapeHtml(g.name)}</td>
+        <td>${g.fixtures.length
+          ? g.fixtures.map(f => `<span class="chip">${escapeHtml(f)}</span>`).join("")
+          : '<span class="msg">No fixtures assigned yet</span>'}</td>
+        <td class="col-actions">
+          <span class="row-actions">
+            <button class="btn secondary small group-edit">Edit</button>
+            <button class="btn danger small group-delete">Delete</button>
+          </span>
+        </td>
+      `;
+      tr.querySelector(".group-edit").addEventListener("click", () => openEditGroupModal(g));
+      tr.querySelector(".group-delete").addEventListener("click", () => openDeleteGroupModal(g));
+      tbody.appendChild(tr);
+    }
+  } catch (e) { /* ignore — reopening the tab reloads the list */ }
+}
+loadGroups();
+
+// ── Rules page ───────────────────────────────────────────────────────────
+
+// DMX <-> percent conversion, used only for display; everything is stored/sent as DMX.
+let valueUnit = "dmx";
+function dmxToDisplay(dmx) { return valueUnit === "percent" ? Math.round((dmx / 255) * 100) : dmx; }
+function displayToDmx(display) { return valueUnit === "percent" ? Math.round((display / 100) * 255) : display; }
+
+function refreshAllValueDisplays() {
+  // Number inputs in an open modal keep the authoritative DMX in data-dmx —
+  // repaint their displayed value in the newly chosen unit.
+  document.querySelectorAll(".rule-max, .rule-min, .import-min, .import-max").forEach(input => {
+    const dmx = input.dataset.dmx;
+    input.value = (dmx === undefined || dmx === "") ? "" : dmxToDisplay(Number(dmx));
+  });
+  const hint = document.querySelector(".rule-unit-hint");
+  if (hint) hint.textContent = valueUnit === "percent" ? "shown as percent (0–100)" : "shown as DMX (0–255)";
+  if (allRules && allRules.length) {
+    renderRulesList();
+    if (document.getElementById("page-cues").classList.contains("active")) {
+      renderCuesList(allCues, lastActiveCue);
+    }
+  }
+}
+
+document.getElementById("valueUnitSelect").addEventListener("change", (e) => {
+  valueUnit = e.target.value;
+  refreshAllValueDisplays();
+});
+
+function profileDisplayName(profileId) {
+  if (!profileId) return "General (no specific profile)";
+  const p = libraryProfiles.find(p => p.id === profileId);
+  return p ? `${p.manufacturer} — ${p.model}` : profileId;
+}
+
+function populateProfileSelect(selectEl, selectedId = "") {
+  selectEl.innerHTML = '<option value="">— No specific profile —</option>';
+  for (const p of libraryProfiles) {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = `${p.manufacturer} — ${p.model}`;
+    selectEl.appendChild(opt);
+  }
+  selectEl.value = selectedId || "";
+}
+
+// The rule form, laid out for a modal. The number inputs carry the
+// authoritative DMX value in data-dmx; what's *displayed* honours the
+// DMX/percent toggle, so never read .value straight into a request body.
+// A rule is a named package: shared name/profile/target/always-active,
+// holding one or more channel-role threshold entries. "House Whites 50%"
+// might set dimmer/red/green/blue/strobe all under one name — the entries
+// list below is what makes that one rule instead of five.
+function ruleFormHtml(prefill = {}) {
+  const alwaysActive = prefill.always_active ?? false;
+  const appliesVal = prefill.applies_to ?? "*";
+  return `
+    <div class="row">
+      <div class="field" style="flex:1; max-width:360px;">
+        <label>Name</label>
+        <input class="rule-name" placeholder="House Whites 50%" value="${escapeHtml(prefill.name ?? "")}" style="width:100%;">
+      </div>
+      <div class="field" style="flex:1; max-width:280px;">
+        <label>Profile</label>
+        <select class="rule-profile" style="width:100%;"></select>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field" style="flex:1; max-width:560px;">
+        <label>Description</label>
+        <input class="rule-desc" value="${escapeHtml(prefill.description ?? "")}" style="width:100%;">
+      </div>
+    </div>
+    <div class="row" style="margin-bottom:6px;">
+      <label class="inline-check">
+        <input type="checkbox" class="rule-always" ${alwaysActive ? "checked" : ""}> Always active
+      </label>
+    </div>
+    <div class="row rule-applies-field" style="${alwaysActive ? "" : "display:none;"}">
+      <div class="field" style="flex:1; max-width:560px;">
+        <label>Applies to</label>
+        ${targetPickerHtml(ruleTargetsData.fixtures, ruleTargetsData.groups, appliesVal)}
+      </div>
+    </div>
+    <p class="msg">An "always active" rule is enforced no matter which cue is selected, against the target above. Leave it unchecked and it's only enforced by cues that assign it — each cue picks its own target. Either way the target applies to every channel entry below at once.</p>
+    <div class="field" style="margin-top:6px;">
+      <label>Channel entries</label>
+      <div class="rule-entries" id="ruleEntries"></div>
+      <button class="btn secondary" type="button" id="ruleAddEntryBtn" style="margin-top:8px; height:30px; align-self:flex-start;">+ Add channel</button>
+      <span class="msg rule-unit-hint"></span>
+    </div>
+  `;
+}
+
+// One channel-role row within the entries list: role + min/max range.
+function ruleEntryRowHtml(entry = {}) {
+  return `
+    <div class="rule-entry-row">
+      <div class="field"><label>Channel role</label><input class="entry-channel" placeholder="intensity" value="${escapeHtml(entry.channel ?? "")}" style="min-width:150px;"></div>
+      <div class="field"><label>Min</label><input class="entry-min" type="number" data-dmx="" style="width:64px; min-width:64px;"></div>
+      <div class="field">
+        <label>Range</label>
+        <div class="range-slider">
+          <div class="range-track-bg"></div>
+          <div class="range-track-fill"></div>
+          <input type="range" class="entry-min-slider" min="0" max="255">
+          <input type="range" class="entry-max-slider" min="0" max="255">
+        </div>
+      </div>
+      <div class="field"><label>Max</label><input class="entry-max" type="number" data-dmx="" style="width:64px; min-width:64px;"></div>
+      <button class="btn secondary entry-remove" type="button" style="height:32px;">✕</button>
+    </div>
+  `;
+}
+
+// Wires one entry row's remove button and its min/max ↔ slider sync —
+// identical DMX-clamping logic to the old single-channel rule form, just
+// scoped to a row instead of the whole modal.
+function wireRuleEntryRow(row, entry = {}) {
+  row.querySelector(".entry-remove").addEventListener("click", () => {
+    // never let the form drop to zero rows — collectRuleForm requires at
+    // least one entry, and an empty entries list can't be submitted anyway.
+    if (row.parentElement.children.length > 1) row.remove();
+  });
+
+  const minInput = row.querySelector(".entry-min");
+  const maxInput = row.querySelector(".entry-max");
+  const minSlider = row.querySelector(".entry-min-slider");
+  const maxSlider = row.querySelector(".entry-max-slider");
+  const trackFill = row.querySelector(".range-track-fill");
+
+  function updateTrackFill() {
+    const minVal = Number(minSlider.value);
+    const maxVal = Number(maxSlider.value);
+    trackFill.style.left = `${(minVal / 255) * 100}%`;
+    trackFill.style.width = `${((maxVal - minVal) / 255) * 100}%`;
+  }
+
+  function setDmx(minDmx, maxDmx) {
+    minSlider.value = minDmx;
+    maxSlider.value = maxDmx;
+    minInput.dataset.dmx = String(minDmx);
+    maxInput.dataset.dmx = String(maxDmx);
+    minInput.value = dmxToDisplay(minDmx);
+    maxInput.value = dmxToDisplay(maxDmx);
+    updateTrackFill();
+  }
+
+  minSlider.addEventListener("input", () => {
+    let minVal = Number(minSlider.value);
+    let maxVal = Number(maxSlider.value);
+    if (minVal > maxVal) { maxVal = minVal; maxSlider.value = maxVal; }
+    setDmx(minVal, maxVal);
+  });
+  maxSlider.addEventListener("input", () => {
+    let minVal = Number(minSlider.value);
+    let maxVal = Number(maxSlider.value);
+    if (maxVal < minVal) { minVal = maxVal; minSlider.value = minVal; }
+    setDmx(minVal, maxVal);
+  });
+  minInput.addEventListener("input", () => {
+    const dmx = minInput.value === "" ? 0 : displayToDmx(Number(minInput.value));
+    const clamped = Math.max(0, Math.min(255, dmx));
+    setDmx(clamped, Math.max(clamped, Number(maxSlider.value)));
+  });
+  maxInput.addEventListener("input", () => {
+    const dmx = maxInput.value === "" ? 255 : displayToDmx(Number(maxInput.value));
+    const clamped = Math.max(0, Math.min(255, dmx));
+    setDmx(Math.min(Number(minSlider.value), clamped), clamped);
+  });
+
+  setDmx(entry.min ?? 0, entry.max ?? 255);
+}
+
+function wireRuleForm(bodyEl, prefill = {}) {
+  populateProfileSelect(bodyEl.querySelector(".rule-profile"), prefill.profile_id ?? "");
+
+  const alwaysCheckbox = bodyEl.querySelector(".rule-always");
+  const appliesField = bodyEl.querySelector(".rule-applies-field");
+  alwaysCheckbox.addEventListener("change", () => {
+    appliesField.style.display = alwaysCheckbox.checked ? "" : "none";
+  });
+  wireTargetPicker(appliesField.querySelector(".target-picker"));
+
+  bodyEl.querySelector(".rule-unit-hint").textContent =
+    valueUnit === "percent" ? "shown as percent (0–100)" : "shown as DMX (0–255)";
+
+  const entriesContainer = bodyEl.querySelector("#ruleEntries");
+  function addEntryRow(entry = {}) {
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = ruleEntryRowHtml(entry).trim();
+    const row = wrapper.firstElementChild;
+    entriesContainer.appendChild(row);
+    wireRuleEntryRow(row, entry);
+  }
+  bodyEl.querySelector("#ruleAddEntryBtn").addEventListener("click", () => addEntryRow());
+
+  const entries = prefill.entries && prefill.entries.length ? prefill.entries : [{}];
+  for (const entry of entries) addEntryRow(entry);
+}
+
+function collectRuleForm(bodyEl) {
+  const dmxOrNull = (el) =>
+    (el.dataset.dmx !== undefined && el.dataset.dmx !== "") ? Number(el.dataset.dmx) : null;
+  const entries = [...bodyEl.querySelectorAll("#ruleEntries .rule-entry-row")].map(row => ({
+    channel: row.querySelector(".entry-channel").value.trim(),
+    max: dmxOrNull(row.querySelector(".entry-max")),
+    min: dmxOrNull(row.querySelector(".entry-min")),
+  })).filter(e => e.channel);
+
+  return {
+    name: bodyEl.querySelector(".rule-name").value.trim(),
+    profile_id: bodyEl.querySelector(".rule-profile").value || null,
+    applies_to: collectTargetPicker(bodyEl.querySelector(".rule-applies-field .target-picker")),
+    description: bodyEl.querySelector(".rule-desc").value.trim(),
+    always_active: bodyEl.querySelector(".rule-always").checked,
+    entries,
+  };
+}
+
+// Compact per-entry bounds for chips and the delete-confirmation text, in
+// the current display unit — e.g. "= 166", "10–200", "≤ 48", "any".
+function ruleEntryRangeText(e) {
+  const suffix = valueUnit === "percent" ? "%" : "";
+  const hasMin = e.min !== null && e.min !== undefined;
+  const hasMax = e.max !== null && e.max !== undefined;
+  if (!hasMin && !hasMax) return "any";
+  if (hasMin && hasMax) {
+    return e.min === e.max
+      ? `= ${dmxToDisplay(e.min)}${suffix}`
+      : `${dmxToDisplay(e.min)}–${dmxToDisplay(e.max)}${suffix}`;
+  }
+  return hasMax ? `≤ ${dmxToDisplay(e.max)}${suffix}` : `≥ ${dmxToDisplay(e.min)}${suffix}`;
+}
+
+function ruleLabel(r) {
+  const count = r.entries.length;
+  const summary = count === 1
+    ? `${r.entries[0].channel} ${ruleEntryRangeText(r.entries[0])}`
+    : `${count} channels`;
+  return `${r.name || "(unnamed)"} — ${summary}`;
+}
+
+let allRules = [];
+
+
+async function openAddRuleModal() {
+  await loadRuleTargets();
+  openFormModal({
+    title: "Add rule",
+    wide: true,
+    bodyHtml: ruleFormHtml(),
+    onReady: (bodyEl) => wireRuleForm(bodyEl),
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Create rule",
+        onClick: async (bodyEl, btn) => {
+          const body = collectRuleForm(bodyEl);
+          if (!body.entries.length) { setMsg(formModalMsg, "Add at least one channel entry.", false); return; }
+          btn.disabled = true;
+          try {
+            const res = await fetch("/api/rules", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (!res.ok) { setMsg(formModalMsg, data.error || "Failed to create rule.", false); return; }
+            closeFormModal();
+            showToast(`Created "${body.name || data.entries[0].channel}" with ${body.entries.length} channel(s).`);
+            await loadRulesList();
+          } catch (e) {
+            setMsg(formModalMsg, "Request failed — check the console log.", false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+async function openEditRuleModal(rule) {
+  await loadRuleTargets();
+  const prefill = {
+    name: rule.name,
+    profile_id: rule.profile_id,
+    applies_to: rule.applies_to,
+    description: rule.description,
+    always_active: rule.always_active,
+    entries: rule.entries,
+  };
+  openFormModal({
+    title: `Edit rule "${rule.name || "(unnamed)"}"`,
+    wide: true,
+    bodyHtml: ruleFormHtml(prefill),
+    onReady: (bodyEl) => wireRuleForm(bodyEl, prefill),
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Save changes",
+        onClick: async (bodyEl, btn) => {
+          const body = collectRuleForm(bodyEl);
+          if (!body.entries.length) { setMsg(formModalMsg, "Add at least one channel entry.", false); return; }
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/api/rules/${encodeURIComponent(rule.id)}`, {
+              method: "PUT", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (!res.ok) { setMsg(formModalMsg, data.error || "Failed to update rule.", false); return; }
+            closeFormModal();
+            showToast(`Updated "${body.name || data.entries[0].channel}".`);
+            await loadRulesList();
+            await loadCues(); // cue rows label themselves from the rule text
+          } catch (e) {
+            setMsg(formModalMsg, "Request failed — check the console log.", false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+function openDeleteRuleModal(rule) {
+  const usedBy = allCues
+    .filter(c => c.rule_assignments.some(a => a.rule_id === rule.id))
+    .map(c => c.name);
+  const entriesText = rule.entries.map(e => `${e.channel} ${ruleEntryRangeText(e)}`).join(", ");
+  openFormModal({
+    title: `Delete rule "${rule.name || "(unnamed)"}"?`,
+    bodyHtml: `
+      <p style="margin:0; font-size:13px; color:#ccc;">${escapeHtml(entriesText)}</p>
+      ${usedBy.length
+        ? `<p class="msg">Also unassigns it from ${usedBy.length} cue(s): ${escapeHtml(usedBy.join(", "))}.</p>`
+        : '<p class="msg">No cue currently assigns this rule.</p>'}
+    `,
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Delete rule",
+        variant: "danger",
+        onClick: async (bodyEl, btn) => {
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/api/rules/${encodeURIComponent(rule.id)}`, { method: "DELETE" });
+            const data = await res.json();
+            if (!res.ok) { setMsg(formModalMsg, data.error || "Failed to delete rule.", false); return; }
+            closeFormModal();
+            const extra = data.removed_from_cues && data.removed_from_cues.length
+              ? ` Unassigned from ${data.removed_from_cues.join(", ")}.` : "";
+            showToast(`Deleted "${rule.name || rule.entries[0]?.channel || "(unnamed)"}".${extra}`);
+            await loadRulesList();
+            await loadCues();
+          } catch (e) {
+            setMsg(formModalMsg, "Request failed — check the console log.", false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+document.getElementById("ruleAddBtn").addEventListener("click", openAddRuleModal);
+
+function groupByProfile(rules) {
+  const groups = new Map();
+  for (const r of rules) {
+    const key = r.profile_id || "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  const keys = [...groups.keys()].sort((a, b) => {
+    if (a === "") return 1;
+    if (b === "") return -1;
+    return profileDisplayName(a).localeCompare(profileDisplayName(b));
+  });
+  return keys.map(key => ({ key, label: profileDisplayName(key), rules: groups.get(key) }));
+}
+
+// One chip per channel entry, e.g. "dimmer = 166" — the table's stand-in for
+// what used to be a whole separate row per channel before rules were packages.
+function ruleEntriesHtml(rule) {
+  if (!rule.entries.length) return '<span class="msg">No channels</span>';
+  return rule.entries.map(e =>
+    `<span class="chip">${escapeHtml(e.channel)} ${escapeHtml(ruleEntryRangeText(e))}</span>`
+  ).join("");
+}
+
+// An always-active rule carries its own target; a cue-assigned one gets its
+// target from each cue that selects it, so show which cues those are.
+function ruleScopeHtml(r) {
+  if (r.always_active) {
+    const scope = Array.isArray(r.applies_to) ? r.applies_to.join(", ") : "all fixtures";
+    return '<span class="badge ok">ALWAYS ACTIVE</span>'
+      + `<div style="margin-top:4px; font-size:11px; color:#999;">${escapeHtml(scope)}</div>`;
+  }
+  const usedBy = allCues
+    .filter(c => c.rule_assignments.some(a => a.rule_id === r.id))
+    .map(c => c.name);
+  return usedBy.length
+    ? `<span class="msg">via ${escapeHtml(usedBy.join(", "))}</span>`
+    : '<span class="msg">not assigned to any cue</span>';
+}
+
+function renderRulesList() {
+  const container = document.getElementById("rulesList");
+  if (!allRules.length) {
+    container.innerHTML = '<div class="empty">No rules yet — use "+ Add Rule", or "Import from live values" to snapshot a fixture or group.</div>';
+    return;
+  }
+  container.innerHTML = `
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:220px;">Name</th>
+          <th>Channels</th>
+          <th style="width:200px;">Scope</th>
+          <th class="col-actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  `;
+  const tbody = container.querySelector("tbody");
+
+  for (const group of groupByProfile(allRules)) {
+    const headerRow = document.createElement("tr");
+    headerRow.className = "group-row";
+    headerRow.innerHTML = `<td colspan="4">${escapeHtml(group.label)}</td>`;
+    tbody.appendChild(headerRow);
+
+    for (const r of group.rules) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="row-name">${escapeHtml(r.name || "(unnamed)")}
+          ${r.description ? `<div style="margin-top:4px; font-size:11px; color:#999; font-weight:400;">${escapeHtml(r.description)}</div>` : ""}</td>
+        <td>${ruleEntriesHtml(r)}</td>
+        <td>${ruleScopeHtml(r)}</td>
+        <td class="col-actions">
+          <span class="row-actions">
+            <button class="btn secondary small rule-edit">Edit</button>
+            <button class="btn danger small rule-delete">Delete</button>
+          </span>
+        </td>
+      `;
+      tr.querySelector(".rule-edit").addEventListener("click", () => openEditRuleModal(r));
+      tr.querySelector(".rule-delete").addEventListener("click", () => openDeleteRuleModal(r));
+      tbody.appendChild(tr);
+    }
+  }
+}
+
+async function loadRulesList() {
+  try {
+    const res = await fetch("/api/rules");
+    const data = await res.json();
+    allRules = data.rules;
+    renderRulesList();
+    return allRules;
+  } catch (e) {
+    return [];
+  }
+}
+
+// ── Import live channel values → new rules ───────────────────────────────
+
+let importTargetsList = [];
+let ruleTargetsData = { fixtures: [], groups: [] };
+
+async function loadRuleTargets() {
+  try {
+    const res = await fetch("/api/rule-targets");
+    const data = await res.json();
+    ruleTargetsData = data;
+    importTargetsList = [
+      ...data.fixtures.map(f => ({ type: "fixture", name: f.name })),
+      ...data.groups.map(g => ({ type: "group", name: g.name })),
+    ];
+  } catch (e) { /* ignore */ }
+}
+
+// One row per channel role, min/max prefilled from the live snapshot and
+// editable before anything is created. Min/max are shown in the current
+// display unit; the authoritative DMX value rides along in data-dmx. All
+// checked rows become entries in a single rule package, named by the field
+// above the list — this is the fast path for building something like
+// "House Whites 50%" without hand-typing every channel.
+function importChannelRowsHtml(entries, defaultName) {
+  return `
+    <div class="row">
+      <div class="field" style="flex:1; max-width:360px;">
+        <label>Rule name</label>
+        <input id="importRuleName" value="${escapeHtml(defaultName)}" style="width:100%;">
+      </div>
+    </div>
+    <div class="checklist-tools">
+      <input type="search" class="checklist-search" placeholder="Filter channels…" autocomplete="off">
+      <span class="checklist-count"></span>
+    </div>
+    <div class="scroll-list" data-filter-list="channel">
+      ${entries.map(({ role, min, max, note }) => `
+        <div class="import-row" data-role="${escapeHtml(role)}" data-search="${escapeHtml(role.toLowerCase())}">
+          <label class="inline-check">
+            <input type="checkbox" class="import-check" checked>
+            <span class="import-role">${escapeHtml(role)}</span>
+          </label>
+          <span class="import-fields">
+            <input type="number" class="import-min" data-dmx="${min}" value="${dmxToDisplay(min)}">
+            <span class="msg">to</span>
+            <input type="number" class="import-max" data-dmx="${max}" value="${dmxToDisplay(max)}">
+            <span class="msg">${escapeHtml(note)}</span>
+          </span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+// Keeps data-dmx authoritative while the user types in display units.
+function wireImportRows(bodyEl) {
+  for (const input of bodyEl.querySelectorAll(".import-min, .import-max")) {
+    input.addEventListener("input", () => {
+      const dmx = input.value === "" ? 0 : displayToDmx(Number(input.value));
+      input.dataset.dmx = String(Math.max(0, Math.min(255, dmx)));
+    });
+  }
+  wireChecklistFilter(bodyEl);
+}
+
+async function openImportRulesModal() {
+  await loadRuleTargets();
+  if (!importTargetsList.length) {
+    openFormModal({
+      title: "Import from live values",
+      bodyHtml: '<p class="msg">Nothing to import from yet — patch a fixture on the Patch tab first.</p>',
+      buttons: [{ label: "Close", variant: "secondary", onClick: closeFormModal }],
+    });
+    return;
+  }
+
+  const targetOptions = importTargetsList.map((t, i) =>
+    `<option value="${i}">${t.type === "fixture" ? "Fixture" : "Group"}: ${escapeHtml(t.name)}</option>`
+  ).join("");
+
+  openFormModal({
+    title: "Import from live values",
+    wide: true,
+    bodyHtml: `
+      <p class="msg">Pick a target and load what it's outputting right now. Each checked channel becomes an entry in one new rule, locked to its current value — widen the ranges here, or edit the rule afterward.</p>
+      <div class="row">
+        <div class="field" style="flex:1; max-width:360px;">
+          <label>Target</label>
+          <select id="importTargetSelect" style="width:100%;">${targetOptions}</select>
+        </div>
+        <button class="btn secondary" id="importLoadBtn" style="align-self:flex-end;">Load current values</button>
+      </div>
+      <div id="importChannels"></div>
+    `,
+    onReady: (bodyEl) => {
+      bodyEl.querySelector("#importLoadBtn").addEventListener("click", async () => {
+        const target = importTargetsList[Number(bodyEl.querySelector("#importTargetSelect").value)];
+        const container = bodyEl.querySelector("#importChannels");
+        if (!target) { setMsg(formModalMsg, "Pick a target first.", false); return; }
+        try {
+          const res = await fetch(`/api/rule-targets/values?target_type=${target.type}&name=${encodeURIComponent(target.name)}`);
+          const data = await res.json();
+          if (!res.ok) { setMsg(formModalMsg, data.error || "Failed to load values.", false); return; }
+
+          const entries = target.type === "group"
+            ? Object.entries(data.ranges).map(([role, r]) => ({
+                role, min: r.min, max: r.max,
+                note: r.min === r.max ? "" : "(range across members)",
+              }))
+            : Object.entries(data.values).map(([role, v]) => ({ role, min: v, max: v, note: "" }));
+
+          if (!entries.length) {
+            container.innerHTML = '<div class="msg">This target has no channels.</div>';
+            return;
+          }
+          container.innerHTML = importChannelRowsHtml(entries, target.name);
+          container.dataset.targetType = target.type;
+          container.dataset.targetName = target.name;
+          wireImportRows(bodyEl);
+          setMsg(formModalMsg, "", true);
+        } catch (e) {
+          setMsg(formModalMsg, "Request failed — check the console log.", false);
+        }
+      });
+    },
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Create rule",
+        onClick: async (bodyEl, btn) => {
+          const container = bodyEl.querySelector("#importChannels");
+          const targetName = container.dataset.targetName;
+          if (!container.dataset.targetType) {
+            setMsg(formModalMsg, "Load values for a target first.", false); return;
+          }
+          const appliesTo = container.dataset.targetType === "group" ? `group:${targetName}` : targetName;
+          const selected = [...container.querySelectorAll(".import-row")]
+            .filter(row => row.querySelector(".import-check").checked);
+          if (!selected.length) { setMsg(formModalMsg, "Nothing selected.", false); return; }
+          const name = bodyEl.querySelector("#importRuleName").value.trim() || targetName;
+
+          const entries = selected.map(row => {
+            const min = Number(row.querySelector(".import-min").dataset.dmx);
+            const max = Number(row.querySelector(".import-max").dataset.dmx);
+            return { channel: row.dataset.role, min: Math.min(min, max), max: Math.max(min, max) };
+          });
+
+          btn.disabled = true;
+          try {
+            const res = await fetch("/api/rules", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name, profile_id: null, applies_to: [appliesTo],
+                description: `imported from ${targetName}`, always_active: false, entries,
+              }),
+            });
+            const data = await res.json();
+            if (!res.ok) { setMsg(formModalMsg, data.error || "Failed to create rule.", false); return; }
+            closeFormModal();
+            showToast(`Created "${name}" with ${entries.length} channel(s) from ${targetName}. Assign it to a cue on the Cues tab.`);
+            await loadRulesList();
+          } catch (e) {
+            setMsg(formModalMsg, "Request failed — check the console log.", false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+document.getElementById("ruleImportBtn").addEventListener("click", openImportRulesModal);
+
+// ── Cues page ────────────────────────────────────────────────────────────
+// Read-only table; every add/edit/delete happens in a modal.
+
+let allCues = [];
+let lastActiveCue = null;
+
+// Builds the cue's rule checklist as HTML for the modal. Each row pairs a
+// checkbox with a target picker (searchable, multi-select, groups listed
+// before fixtures) that only shows once the rule is checked. The picker's
+// checked state is baked in here from selectedAssignments; wireCueRuleChecklist
+// only needs to attach behavior, not populate anything after the fact.
+function cueRuleChecklistHtml(selectedAssignments = []) {
+  const assignable = allRules.filter(r => !r.always_active);
+  if (!assignable.length) {
+    return '<div class="msg">No cue-specific rules yet — create one on the Rules tab (leave "Always active" unchecked) first.</div>';
+  }
+  const targetById = new Map(selectedAssignments.map(a => [a.rule_id, a.applies_to]));
+
+  let html = `
+    <div class="checklist-tools">
+      <input type="search" class="checklist-search" placeholder="Filter rules…" autocomplete="off">
+      <span class="checklist-count"></span>
+    </div>
+    <div class="scroll-list" data-filter-list="rule">`;
+
+  for (const group of groupByProfile(assignable)) {
+    html += `<div class="group-header" data-group-header="${escapeHtml(group.label)}">${escapeHtml(group.label)}</div>`;
+    for (const r of group.rules) {
+      const isSelected = targetById.has(r.id);
+      const label = ruleLabel(r);
+      const matchingFixtures = ruleTargetsData.fixtures.filter(f => !r.profile_id || f.profile === r.profile_id);
+      html += `
+        <div class="cue-rule-row" data-rule-id="${escapeHtml(r.id)}"
+             data-group="${escapeHtml(group.label)}"
+             data-search="${escapeHtml((label + " " + group.label).toLowerCase())}">
+          <label>
+            <input type="checkbox" class="cue-rule-check" value="${escapeHtml(r.id)}" ${isSelected ? "checked" : ""}>
+            <span>${escapeHtml(label)}</span>
+          </label>
+          <div class="cue-rule-target" style="margin-left:21px; margin-top:6px; ${isSelected ? "" : "display:none;"}">
+            ${targetPickerHtml(matchingFixtures, ruleTargetsData.groups, targetById.get(r.id) ?? "*")}
+          </div>
+        </div>`;
+    }
+  }
+  return html + `</div>`;
+}
+
+function wireCueRuleChecklist(bodyEl) {
+  for (const row of bodyEl.querySelectorAll(".cue-rule-row")) {
+    const checkbox = row.querySelector(".cue-rule-check");
+    const targetDiv = row.querySelector(".cue-rule-target");
+    wireTargetPicker(targetDiv);
+    checkbox.addEventListener("change", () => {
+      targetDiv.style.display = checkbox.checked ? "" : "none";
+    });
+  }
+  wireChecklistFilter(bodyEl);
+}
+
+function collectCueAssignments(bodyEl) {
+  // Unchecked rows and rows hidden by the filter behave the same way: only
+  // what's actually checked is submitted, visible or not.
+  const assignments = [];
+  for (const row of bodyEl.querySelectorAll(".cue-rule-row")) {
+    if (!row.querySelector(".cue-rule-check").checked) continue;
+    assignments.push({
+      rule_id: row.dataset.ruleId,
+      applies_to: collectTargetPicker(row.querySelector(".cue-rule-target")),
+    });
+  }
+  return assignments;
+}
+
+
+// The rule pool and the available targets both change on other tabs, so
+// refresh them before building a dialog rather than trusting the cache.
+async function loadCueFormData() {
+  await loadRulesList();
+  await loadRuleTargets();
+}
+
+async function openAddCueModal() {
+  await loadCueFormData();
+  openFormModal({
+    title: "Add cue",
+    wide: true,
+    bodyHtml: `
+      <div class="row">
+        <div class="field" style="flex:1; max-width:360px;">
+          <label>Name</label>
+          <input id="modalCueName" placeholder="Cue 12 - Blackout" style="width:100%;">
+        </div>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:1; max-width:560px;">
+          <label>Description</label>
+          <input id="modalCueDescription" style="width:100%;">
+        </div>
+      </div>
+      <p class="msg">Check which rules should be enforced while this cue is active, and pick a target for each. Rules marked "always active" aren't listed — they apply regardless of the active cue.</p>
+      <div class="field" style="margin-top:6px;">
+        <label>Rules</label>
+        ${cueRuleChecklistHtml()}
+      </div>
+    `,
+    onReady: (bodyEl) => wireCueRuleChecklist(bodyEl),
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Create cue",
+        onClick: async (bodyEl, btn) => {
+          const name = bodyEl.querySelector("#modalCueName").value.trim();
+          if (!name) { setMsg(formModalMsg, "Name is required.", false); return; }
+          const description = bodyEl.querySelector("#modalCueDescription").value.trim();
+          const rule_assignments = collectCueAssignments(bodyEl);
+          btn.disabled = true;
+          try {
+            const res = await fetch("/api/cues", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name, description, rule_assignments }),
+            });
+            const data = await res.json();
+            if (!res.ok) { setMsg(formModalMsg, data.error || "Failed to save cue.", false); return; }
+            closeFormModal();
+            showToast(`Created "${name}"${rule_assignments.length ? ` with ${rule_assignments.length} rule(s).` : " (no rules assigned yet)."}`);
+            await loadCues();
+          } catch (e) {
+            setMsg(formModalMsg, "Request failed — check the console log.", false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+async function openEditCueModal(cue) {
+  await loadCueFormData();
+  openFormModal({
+    title: `Edit cue "${cue.name}"`,
+    wide: true,
+    bodyHtml: `
+      <div class="row">
+        <div class="field" style="flex:1; max-width:360px;">
+          <label>Name</label>
+          <input id="modalCueName" value="${escapeHtml(cue.name)}" style="width:100%;">
+        </div>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:1; max-width:560px;">
+          <label>Description</label>
+          <input id="modalCueDescription" value="${escapeHtml(cue.description || "")}" style="width:100%;">
+        </div>
+      </div>
+      <p class="msg">Check which rules should be enforced while this cue is active, and pick a target for each. Rules marked "always active" aren't listed — they apply regardless of the active cue.</p>
+      <div class="field" style="margin-top:6px;">
+        <label>Rules</label>
+        ${cueRuleChecklistHtml(cue.rule_assignments)}
+      </div>
+    `,
+    onReady: (bodyEl) => wireCueRuleChecklist(bodyEl),
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Save changes",
+        onClick: async (bodyEl, btn) => {
+          const name = bodyEl.querySelector("#modalCueName").value.trim();
+          if (!name) { setMsg(formModalMsg, "Name is required.", false); return; }
+          const description = bodyEl.querySelector("#modalCueDescription").value.trim();
+          const rule_assignments = collectCueAssignments(bodyEl);
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/api/cues/${encodeURIComponent(cue.name)}`, {
+              method: "PUT", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name, description, rule_assignments }),
+            });
+            const data = await res.json();
+            if (!res.ok) { setMsg(formModalMsg, data.error || "Failed to update cue.", false); return; }
+            closeFormModal();
+            showToast(data.renamed
+              ? `Renamed to "${name}" — ${rule_assignments.length} rule(s) assigned.`
+              : `Updated "${name}" — ${rule_assignments.length} rule(s) assigned.`);
+            await loadCues();
+          } catch (e) {
+            setMsg(formModalMsg, "Request failed — check the console log.", false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+function openDeleteCueModal(cue, isActive) {
+  openFormModal({
+    title: `Delete cue "${cue.name}"?`,
+    bodyHtml: `
+      <p style="margin:0; font-size:13px; color:#ccc;">
+        This removes the cue and its ${cue.rule_assignments.length} rule assignment(s). The
+        rules themselves stay in the pool and remain available to other cues.
+      </p>
+      ${isActive ? '<p class="msg">This cue is currently active — deleting it drops back to baseline (always-active rules only).</p>' : ""}
+    `,
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Delete cue",
+        variant: "danger",
+        onClick: async (bodyEl, btn) => {
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/api/cues/${encodeURIComponent(cue.name)}`, { method: "DELETE" });
+            if (!res.ok) { setMsg(formModalMsg, "Failed to delete cue.", false); return; }
+            closeFormModal();
+            showToast(`Deleted "${cue.name}".`);
+            await loadCues();
+          } catch (e) {
+            setMsg(formModalMsg, "Request failed — check the console log.", false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+document.getElementById("cueAddBtn").addEventListener("click", openAddCueModal);
+
+function cueAssignmentSummary(cue) {
+  const known = cue.rule_assignments.filter(a => allRules.some(r => r.id === a.rule_id));
+  if (!known.length) return '<span class="msg">No rules assigned</span>';
+  const targets = [...new Set(known.map(a =>
+    a.applies_to === "*" ? "all fixtures"
+      : (Array.isArray(a.applies_to) ? a.applies_to.join(", ") : a.applies_to)))];
+  return `<span class="chip">${known.length} rule${known.length === 1 ? "" : "s"}</span>`
+    + `<div style="margin-top:4px; font-size:11px; color:#999;">→ ${escapeHtml(targets.join(" · "))}</div>`;
+}
+
+function renderCuesList(cues, activeCue) {
+  const container = document.getElementById("cuesList");
+  if (!cues.length) {
+    container.innerHTML = '<div class="empty">No cues yet — use "Add Cue" to create one.</div>';
+    return;
+  }
+  container.innerHTML = `
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:220px;">Name</th>
+          <th style="width:240px;">Description</th>
+          <th>Rules</th>
+          <th class="col-actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  `;
+  const tbody = container.querySelector("tbody");
+  for (const cue of cues) {
+    const isActive = cue.name === activeCue;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="row-name">${escapeHtml(cue.name)}${isActive ? ' <span class="badge ok">ACTIVE</span>' : ""}</td>
+      <td>${cue.description ? escapeHtml(cue.description) : '<span class="msg">—</span>'}</td>
+      <td>${cueAssignmentSummary(cue)}</td>
+      <td class="col-actions">
+        <span class="row-actions">
+          <button class="btn secondary small cue-toggle-active">${isActive ? "Clear" : "Set Active"}</button>
+          <button class="btn secondary small cue-edit">Edit</button>
+          <button class="btn danger small cue-delete">Delete</button>
+        </span>
+      </td>
+    `;
+    tr.querySelector(".cue-toggle-active").addEventListener("click", () => setActiveCue(isActive ? null : cue.name));
+    tr.querySelector(".cue-edit").addEventListener("click", () => openEditCueModal(cue));
+    tr.querySelector(".cue-delete").addEventListener("click", () => openDeleteCueModal(cue, isActive));
+    tbody.appendChild(tr);
+  }
+}
+
+function renderActiveCueSelect(cues, activeCue) {
+  const select = document.getElementById("activeCueSelect");
+  select.innerHTML = '<option value="">— None (baseline only) —</option>';
+  for (const cue of cues) {
+    const opt = document.createElement("option");
+    opt.value = cue.name;
+    opt.textContent = cue.name;
+    select.appendChild(opt);
+  }
+  select.value = activeCue || "";
+}
+
+document.getElementById("activeCueSelect").addEventListener("change", (e) => {
+  setActiveCue(e.target.value || null);
+});
+
+async function setActiveCue(name) {
+  await fetch("/api/active-cue", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  await loadCues();
+}
+
+async function loadCues() {
+  try {
+    const res = await fetch("/api/cues");
+    const data = await res.json();
+    allCues = data.cues;
+    lastActiveCue = data.active_cue;
+    renderCuesList(data.cues, data.active_cue);
+    renderActiveCueSelect(data.cues, data.active_cue);
+  } catch (e) { /* ignore — next poll or ws update will retry */ }
+}
+
+// ── Backup & Restore ─────────────────────────────────────────────────────
+
+document.getElementById("backupExportBtn").addEventListener("click", () => {
+  // A plain navigation, not fetch(): the response is a file with
+  // Content-Disposition: attachment, so the browser handles the download
+  // and save-as itself -- no JS-side blob/anchor plumbing needed.
+  window.location.href = "/api/backup/export";
+});
+
+// Reloads every page's cached data after a restore replaces the fixtures,
+// groups, rules, and cues out from under them -- otherwise a page you'd
+// already visited this session would keep showing its pre-restore snapshot
+// until you switched tabs away and back.
+async function refreshAllPagesAfterImport() {
+  await loadFixtureLibrary();
+  await loadPatchGrids();
+  await loadGroups();
+  await loadRuleTargets();
+  await loadRulesList();
+  await loadCues();
+}
+
+function openImportBackupModal() {
+  openFormModal({
+    title: "Import backup",
+    bodyHtml: `
+      <p class="msg">This <b>replaces</b> every fixture, group, rule, and cue currently configured with what's in the file — this can't be undone.</p>
+      <p class="msg">Fixture profiles (imported or custom) in the backup are added alongside whatever's already here; none are removed.</p>
+      <p class="msg">This machine's network address is never changed by an import. If the backup's universe list differs from this machine's, restart the app afterward for that part to take effect — fixtures, groups, rules, and cues are active immediately.</p>
+      <div class="field" style="margin-top:10px;">
+        <label>Backup file</label>
+        <input type="file" id="importBackupFile" accept=".zip">
+      </div>
+    `,
+    buttons: [
+      { label: "Cancel", variant: "secondary", onClick: closeFormModal },
+      {
+        label: "Import backup",
+        variant: "danger",
+        onClick: async (bodyEl, btn) => {
+          const file = bodyEl.querySelector("#importBackupFile").files[0];
+          if (!file) { setMsg(formModalMsg, "Choose a backup file first.", false); return; }
+          const formData = new FormData();
+          formData.append("file", file);
+          btn.disabled = true;
+          try {
+            const res = await fetch("/api/backup/import", { method: "POST", body: formData });
+            const data = await res.json();
+            if (!res.ok) { setMsg(formModalMsg, data.error || "Import failed.", false); return; }
+            closeFormModal();
+            showToast(data.restart_required
+              ? `Backup restored (${data.fixtures} fixtures, ${data.groups} groups, ${data.rules} rules, ${data.cues} cues) — restart the app for the imported universe list to take effect.`
+              : `Backup restored: ${data.fixtures} fixtures, ${data.groups} groups, ${data.rules} rules, ${data.cues} cues.`);
+            await refreshAllPagesAfterImport();
+          } catch (e) {
+            setMsg(formModalMsg, "Request failed — check the console log.", false);
+          } finally {
+            btn.disabled = false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+document.getElementById("backupImportBtn").addEventListener("click", openImportBackupModal);
+
+loadRulesList().then(() => loadCues());
+loadRuleTargets();
+
+// Refresh cross-tab data (fixtures/groups/rules may have changed) whenever these tabs are opened.
+// The Rules table's Scope column names the cues assigning each rule, so it
+// needs the cue list too.
+document.querySelectorAll(".nav-tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    if (tab.dataset.page === "patch") { loadPatchGrids(); }
+    if (tab.dataset.page === "groups") { loadGroups(); }
+    if (tab.dataset.page === "rules") { loadRulesList().then(() => loadCues()); loadRuleTargets(); }
+    if (tab.dataset.page === "cues") { loadRulesList().then(() => loadCues()); }
+  });
+});
+
+// ── Monitor page: universe channel grid ─────────────────────────────────
+
+const COLOR_COMPLIANT = "#2e7d32";
+const COLOR_VIOLATION = "#c62828";
+const COLOR_GREY_IDLE = "#2a2a2a";   // value == 0, unpatched or unchecked
+const COLOR_GREY_ACTIVE = "#6a6a6a"; // value > 0, unpatched or unchecked -- one flat shade, not a gradient
+
+function cellColor(checked, violated, value) {
+  if (!checked) {
+    return value > 0 ? COLOR_GREY_ACTIVE : COLOR_GREY_IDLE;
+  }
+  return violated ? COLOR_VIOLATION : COLOR_COMPLIANT;
+}
+
+let latestSnapshot = null;
+const universeGridBuilt = new Set();
+const cellRefs = {};
+// Fixture ownership rarely changes while a show is running, so rebuilding
+// the name-label overlays and hover groups is skipped unless a universe's
+// owners map actually differs from last tick -- avoids tearing down and
+// re-adding those overlay elements 2x/second for no reason.
+const universeOwnersSignature = {};
+
+function buildUniverseGrid(universe) {
+  const container = document.getElementById("universeGrids");
+  const section = document.createElement("div");
+  section.className = "panel universe-panel";
+  section.innerHTML = `
+    <h2>Universe ${universe}
+      <span class="badge bad" id="uni-badge-${universe}">NO DATA</span>
+      <span class="msg" id="uni-age-${universe}" style="margin-left:8px; display:inline;"></span>
+    </h2>
+    <div class="chan-grid" id="uni-grid-${universe}"></div>
+  `;
+  container.appendChild(section);
+
+  const cells = buildUniverseGridCells(document.getElementById(`uni-grid-${universe}`));
+  cells.forEach((cell, i) => cell.addEventListener("click", () => openChannelDetail(universe, i + 1)));
+  cellRefs[universe] = cells;
+}
+
+function updateUniverseGrids(snapshot) {
+  for (const [uniStr, info] of Object.entries(snapshot.universes)) {
+    const universe = Number(uniStr);
+    if (!universeGridBuilt.has(universe)) {
+      buildUniverseGrid(universe);
+      universeGridBuilt.add(universe);
+    }
+
+    const active = info.last_update && (Date.now() / 1000 - info.last_update) < 5;
+    const badge = document.getElementById(`uni-badge-${universe}`);
+    badge.textContent = active ? "RECEIVING" : "NO DATA";
+    badge.className = `badge ${active ? "ok" : "bad"}`;
+    document.getElementById(`uni-age-${universe}`).textContent = info.last_update
+      ? `last packet ${(Date.now() / 1000 - info.last_update).toFixed(1)}s ago`
+      : "no data received yet";
+
+    // A channel only counts as "checked" (eligible for green/red) if the
+    // fixture that owns it has at least one rule currently applying to
+    // that specific role -- otherwise it's indistinguishable from
+    // unpatched as far as compliance is concerned, and showing green
+    // would falsely imply something is actually being verified.
+    const checkedChannels = new Set();
+    const violatedChannels = new Set();
+    for (const f of snapshot.fixtures) {
+      if (f.universe !== universe) continue;
+      for (const [ch, owner] of Object.entries(info.owners)) {
+        if (owner.fixture !== f.name) continue;
+        if (f.checked_roles.includes(owner.role)) checkedChannels.add(Number(ch));
+      }
+      for (const v of f.violations) {
+        for (const [ch, owner] of Object.entries(info.owners)) {
+          if (owner.fixture === f.name && owner.role === v.channel) violatedChannels.add(Number(ch));
+        }
+      }
+    }
+
+    const cells = cellRefs[universe];
+    const ownersKey = JSON.stringify(info.owners);
+    if (universeOwnersSignature[universe] !== ownersKey) {
+      universeOwnersSignature[universe] = ownersKey;
+      applyFixtureGrouping(cells, info.owners);
+    }
+
+    for (let i = 0; i < 512; i++) {
+      const ch = i + 1;
+      const value = info.channels[i];
+      const owner = info.owners[String(ch)];
+      const isChecked = checkedChannels.has(ch);
+      const isViolated = violatedChannels.has(ch);
+      const cell = cells[i];
+      cell.style.background = cellColor(isChecked, isViolated, value);
+      cell.classList.toggle("patched", !!owner);
+      cell.classList.toggle("violation", isViolated);
+      const statusNote = !owner ? "" : (isChecked ? "" : " (no rule applies)");
+      cell.title = owner ? `Ch ${ch}: ${owner.fixture} (${owner.role}) = ${value}${statusNote}` : `Ch ${ch}: ${value}`;
+    }
+  }
+}
+
+function openChannelDetail(universe, channel) {
+  if (!latestSnapshot) return;
+  const info = latestSnapshot.universes[universe];
+  const owner = info?.owners?.[String(channel)];
+  const modalBody = document.getElementById("modalBody");
+
+  if (owner) {
+    const fixture = latestSnapshot.fixtures.find(f => f.name === owner.fixture);
+    const valsHtml = fixture
+      ? Object.entries(fixture.values).map(([role, v]) => `<span class="val">${role}: ${v}</span>`).join("")
+      : "";
+    const roleIsChecked = fixture && fixture.checked_roles.includes(owner.role);
+    const roleViolations = fixture ? fixture.violations.filter(v => v.channel === owner.role) : [];
+    let statusHtml;
+    if (roleViolations.length) {
+      statusHtml = roleViolations.map(v => `<div class="viol">⚠ ${v.channel}=${v.value} (${v.description || "max " + v.max})</div>`).join("");
+    } else if (roleIsChecked) {
+      statusHtml = '<div class="msg" style="color:#7ed17e;">Compliant</div>';
+    } else {
+      statusHtml = '<div class="msg">No rule currently applies to this channel.</div>';
+    }
+    modalBody.innerHTML = `
+      <h3 style="margin-top:0;">${owner.fixture}</h3>
+      <div class="msg">Universe ${universe}, channel ${channel} — role "${owner.role}"</div>
+      ${fixture && fixture.profile ? `<div class="msg">Profile: ${fixture.profile} (${fixture.mode})</div>` : ""}
+      <div style="margin:10px 0;">${valsHtml}</div>
+      ${statusHtml}
+    `;
+  } else {
+    const value = info?.channels?.[channel - 1] ?? 0;
+    modalBody.innerHTML = `
+      <h3 style="margin-top:0;">Unpatched channel</h3>
+      <div class="msg">Universe ${universe}, channel ${channel}</div>
+      <div style="margin-top:10px;">Current value: <b>${value}</b></div>
+    `;
+  }
+  document.getElementById("detailModal").classList.add("open");
+}
+
+document.getElementById("modalCloseBtn").addEventListener("click", () => {
+  document.getElementById("detailModal").classList.remove("open");
+});
+document.getElementById("detailModal").addEventListener("click", (e) => {
+  if (e.target.id === "detailModal") e.currentTarget.classList.remove("open");
+});
+
+function render(snapshot) {
+  latestSnapshot = snapshot;
+  updateUniverseGrids(snapshot);
+
+  const select = document.getElementById("activeCueSelect");
+  if (document.activeElement !== select && select.value !== (snapshot.active_cue || "")) {
+    select.value = snapshot.active_cue || "";
+  }
+
+  const violCount = snapshot.fixtures.filter(f => !f.compliant).length;
+  document.getElementById("monitorStatus").textContent =
+    `${snapshot.fixtures.length} fixtures monitored · ` +
+    (violCount ? `${violCount} out of compliance` : "all compliant") +
+    ` · updated ${new Date(snapshot.generated_at * 1000).toLocaleTimeString()}`;
+}
+
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = (ev) => render(JSON.parse(ev.data));
+  ws.onclose = () => {
+    document.getElementById("monitorStatus").textContent = "disconnected — retrying…";
+    setTimeout(connect, 1500);
+  };
+}
+connect();
+</script>
+</body>
+</html>
